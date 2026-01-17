@@ -1,0 +1,181 @@
+# Example configuration file for MQTT Oscilloscope Waveform Viewer
+# This file is automatically created in your home directory as:
+# ~/.ms_viewer_config.yaml
+#
+# You can manually edit this file, but it will be overwritten when
+# the application saves its state on exit.
+
+mqtt:
+  # MQTT broker hostname or IP address
+  broker_host: localhost
+
+  # MQTT broker port (default: 1883, SSL: 8883)
+  broker_port: 1883
+
+  # Topic to subscribe to for incoming waveforms
+  input_topic: oscilloscope/waveform
+
+  # Topic to publish to when republishing waveforms
+  output_topic: oscilloscope/republish
+
+  # Topic to publish ROI statistics to
+  statistics_topic: oscilloscope/statistics
+
+  # MQTT client identifier
+  client_id: ms_viewer
+
+  # Keep-alive interval in seconds
+  keepalive: 60
+
+  # Secondary MQTT broker for publishing output and statistics
+  # Enable this if you want to publish to a different broker than the input broker
+  output_broker_enabled: false
+
+  # Output broker hostname or IP address
+  output_broker_host: localhost
+
+  # Output broker port
+  output_broker_port: 1883
+
+  # Topic to publish republished waveforms on output broker
+  output_broker_output_topic: oscilloscope/republish
+
+  # Topic to publish statistics on output broker
+  output_broker_statistics_topic: oscilloscope/statistics
+
+gui:
+  # List of regions of interest
+  # Each region has a name, start time, and end time
+  regions:
+  - name: "Event 1"
+    start: 0.020
+    end: 0.025
+  - name: "Event 2"
+    start: 0.050
+    end: 0.055
+  # Main window geometry (position and size)
+  # These are automatically saved when the application closes
+  window_geometry:
+    x: 100
+    y: 100
+    width: 1200
+    height: 700
+
+  # Splitter position between waveform and statistics plots
+  # Automatically saved when the application closes
+  splitter_sizes:
+  - 600
+  - 400
+
+preferences:
+  # Last directory used for CSV export
+  # Defaults to user's home directory
+  last_export_dir: /home/user/waveforms
+
+  # Maximum number of historical statistics points to keep for plotting
+  max_history_points: 100
+
+  # Performance settings for high-rate data transfers
+  # Update statistics calculation every N waveforms (default: 10)
+  # Increase this value if GUI becomes unresponsive at high data rates
+  statistics_update_interval: 10
+
+  # Minimum time between statistics updates in milliseconds (default: 100)
+  # This prevents statistics from updating too frequently
+  statistics_update_min_interval_ms: 100
+
+  # Colors for waveform channels (RGB values 0-255)
+  channel_colors:
+  - [ 255, 0, 0 ] # Red
+  - [ 0, 255, 0 ] # Green
+  - [ 0, 0, 255 ] # Blue
+  - [ 255, 255, 0 ] # Yellow
+  - [ 255, 0, 255 ] # Magenta
+  - [ 0, 255, 255 ] # Cyan
+  - [ 255, 128, 0 ] # Orange
+  - [ 128, 0, 255 ] # Purple
+  # Colors for statistics plot curves (RGB values 0-255)
+  statistics_colors:
+  - [ 255, 0, 0 ] # Red
+  - [ 0, 255, 0 ] # Green
+  - [ 0, 0, 255 ] # Blue
+  - [ 255, 255, 0 ] # Yellow
+  - [ 255, 0, 255 ] # Magenta
+  - [ 0, 255, 255 ] # Cyan
+  - [ 255, 128, 0 ] # Orange
+  - [ 128, 0, 255 ] # Purple
+  - [ 255, 128, 128 ] # Light Red
+  - [ 128, 255, 128 ] # Light Green
+  - [ 128, 128, 255 ] # Light Blue
+  - [ 192, 192, 0 ] # Olive
+
+# Custom Statistics Configuration
+statistics:
+  # Directory containing custom statistic plugins
+  # Plugins are Python files that calculate additional metrics
+  plugin_directory: ~/.ms_viewer/plugins
+
+  # List of enabled plugins (filenames without .py extension)
+  # Only plugins in this list will be loaded
+  enabled_plugins:
+  - rms_calculator
+  - frequency_analysis
+  # - pulse_analysis
+
+  # Built-in statistics to calculate
+  # Comment out any you don't need to improve performance
+  builtin_statistics:
+  - mean
+  - median
+  - std_dev
+  - min
+  - max
+  - peak_to_peak
+  - area
+  - n_points
+  - time_span
+  # Expression-based custom statistics
+  # These are evaluated using Python expressions with numpy available as 'np'
+  # Variables available: 'data' (amplitudes), 'times' (time values)
+  expression_statistics:
+  # Example 1: Simple RMS calculation
+  - name: rms
+    display_name: "RMS Value"
+    expression: "np.sqrt(np.mean(data**2))"
+    timeout: 1
+
+  # Example 2: Zero crossing count
+  - name: zero_crossings
+    display_name: "Zero Crossings"
+    expression: "len(np.where(np.diff(np.sign(data)))[0])"
+    timeout: 1
+
+  # Example 3: Crest factor (peak/RMS ratio)
+  - name: crest_factor
+    display_name: "Crest Factor"
+    expression: "np.max(np.abs(data)) / np.sqrt(np.mean(data**2))"
+    timeout: 1
+  # Example 4: Duty cycle (for digital signals)
+  # - name: duty_cycle
+  #   display_name: "Duty Cycle %"
+  #   expression: "(np.sum(data > 0.5 * (np.max(data) + np.min(data))) / len(data)) * 100"
+  #   timeout: 1
+
+  # Example 5: Signal energy
+  # - name: signal_energy
+  #   display_name: "Signal Energy"
+  #   expression: "np.sum(data**2) * (times[1] - times[0])"
+  #   timeout: 1
+
+  # Channel Scaling Configuration
+  # Apply linear scaling to each channel independently
+  # Formula: y := Gain * (y - Offset)
+channel_scaling:
+  # Example for channel 1 (no scaling by default)
+  ch1:
+    gain: 1.0
+    offset: 0.0
+  # Example for channel 2 (amplify by 2x, no offset)
+  ch2:
+    gain: 1.0
+    offset: 0.0
