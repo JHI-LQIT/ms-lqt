@@ -11,10 +11,10 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication
 
-from waveform_viewer.gui import MainWindow
-from waveform_viewer.logging_conf import setup_logging
-from waveform_viewer.mqtt_client import MqttClient
-from waveform_viewer.state_manager import get_default_state_path
+from ms_viewer.gui import MainWindow
+from ms_viewer.logging_conf import setup_logging
+from ms_viewer.mqtt_client import MqttClient
+from ms_viewer.state_manager import get_default_state_path
 
 logger = logging.getLogger(__name__)
 

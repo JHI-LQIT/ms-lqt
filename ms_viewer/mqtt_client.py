@@ -46,9 +46,9 @@ class MqttClient(QObject):
         # Configuration
         self.broker_host = "localhost"
         self.broker_port = 1883
-        self.input_topic = "oscilloscope/waveform"
-        self.output_topic = "oscilloscope/republish"
-        self.client_id = "waveform_viewer"
+        self.input_topic = "lqt/picoscope/waveform"
+        self.output_topic = "lqt/lqt_ms/republish"
+        self.client_id = "ms_viewer"
         self.keepalive = 60
 
         # MQTT client
@@ -62,7 +62,7 @@ class MqttClient(QObject):
         broker_port: int,
         input_topic: str,
         output_topic: str,
-        client_id: str = "waveform_viewer",
+        client_id: str = "ms_viewer",
         keepalive: int = 60,
     ):
         """

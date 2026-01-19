@@ -194,7 +194,7 @@ class MqttConfigDialog(QDialog):
         self.main_window.output_broker_stats_topic_input = QLineEdit()
         self.main_window.output_broker_stats_topic_input.setText(
             self.main_window.state["mqtt"].get(
-                "output_broker_statistics_topic", "oscilloscope/statistics"
+                "output_broker_statistics_topic", "lqt/lqt_ms/statistics"
             )
         )
         output_stats_topic_layout.addWidget(
@@ -2048,10 +2048,10 @@ class MainWindow(QMainWindow):
         )
         statistics_topic = (
             self.state["mqtt"].get(
-                "output_broker_statistics_topic", "oscilloscope/statistics"
+                "output_broker_statistics_topic", "lqt/lqt_ms/statistics"
             )
             if use_output_broker
-            else self.state["mqtt"].get("statistics_topic", "oscilloscope/statistics")
+            else self.state["mqtt"].get("statistics_topic", "lqt/lqt_ms/statistics")
         )
 
         # Check if client is connected

@@ -29,17 +29,17 @@ def load_state(path: str) -> Dict[str, Any]:
         "mqtt": {
             "broker_host": "localhost",
             "broker_port": 1883,
-            "input_topic": "oscilloscope/waveform",
-            "output_topic": "oscilloscope/republish",
-            "statistics_topic": "oscilloscope/statistics",
-            "client_id": "waveform_viewer",
+            "input_topic": "lqt/picoscope/waveform",
+            "output_topic": "lqt/lqt_ms/republish",
+            "statistics_topic": "lqt/lqt_ms/statistics",
+            "client_id": "ms_viewer",
             "keepalive": 60,
             # Secondary broker for output/statistics publishing
             "output_broker_enabled": False,
             "output_broker_host": "localhost",
             "output_broker_port": 1883,
-            "output_broker_output_topic": "oscilloscope/republish",
-            "output_broker_statistics_topic": "oscilloscope/statistics",
+            "output_broker_output_topic": "lqt/lqt_ms/republish",
+            "output_broker_statistics_topic": "lqt/lqt_ms/statistics",
         },
         "gui": {
             "regions": [],  # List of {'start': float, 'end': float, 'name': str}
