@@ -96,6 +96,16 @@ class MqttConfigDialog(QDialog):
         input_layout.addWidget(self.main_window.input_topic_input)
         primary_layout.addLayout(input_layout)
 
+        # Trapping parameters topic
+        trapping_layout = QHBoxLayout()
+        trapping_layout.addWidget(QLabel("Trapping Parameters Topic:"))
+        self.main_window.trapping_parameters_topic_input = QLineEdit()
+        self.main_window.trapping_parameters_topic_input.setText(
+            self.main_window.state["mqtt"]["trapping_parameters_topic"]
+        )
+        trapping_layout.addWidget(self.main_window.trapping_parameters_topic_input)
+        primary_layout.addLayout(trapping_layout)
+
         # Output topic
         output_layout = QHBoxLayout()
         output_layout.addWidget(QLabel("Output Topic:"))
@@ -111,10 +121,9 @@ class MqttConfigDialog(QDialog):
         stats_topic_layout.addWidget(QLabel("Statistics Topic:"))
         self.main_window.stats_topic_input = QLineEdit()
         self.main_window.stats_topic_input.setText(
-            self.main_window.state["mqtt"].get(
-                "statistics_topic", "oscilloscope/statistics"
-            )
+            self.main_window.state["mqtt"]["statistics_topic"]
         )
+
         stats_topic_layout.addWidget(self.main_window.stats_topic_input)
         primary_layout.addLayout(stats_topic_layout)
 
@@ -303,6 +312,7 @@ class StatisticsWorker(QThread):
                 dt=averaged_waveform.dt,
                 channels=scaled_channels,
                 timestamp=averaged_waveform.timestamp,
+                trapping_parameters=averaged_waveform.trapping_parameters,
             )
 
             if self._should_stop:
@@ -383,6 +393,7 @@ class StatisticsWorker(QThread):
             dt=first.dt,
             channels=averaged_channels,
             timestamp=latest_timestamp,
+            trapping_parameters=first.trapping_parameters,
         )
 
 
@@ -450,15 +461,15 @@ class ExportWorker(QThread):
                 channel_names = sorted(self.waveform.channels.keys())
 
                 # Create header
-                header = ["time"] + channel_names
+                header = ["m/z"] + channel_names
 
                 writer = csv.writer(csvfile)
                 writer.writerow(header)
 
                 # Write data rows in batches to allow cancellation
                 batch_size = 10000
-                times = self.waveform.times
-                n_samples = len(times)
+                mz = self.waveform.mz
+                n_samples = len(mz)
 
                 for batch_start in range(0, n_samples, batch_size):
                     if self._should_stop:
@@ -466,7 +477,7 @@ class ExportWorker(QThread):
 
                     batch_end = min(batch_start + batch_size, n_samples)
                     for i in range(batch_start, batch_end):
-                        row = [times[i]]
+                        row = [mz[i]]
                         for ch_name in channel_names:
                             row.append(self.waveform.channels[ch_name][i])
                         writer.writerow(row)
@@ -534,6 +545,8 @@ class PlotDataWorker(QThread):
         self.waveform = None
         self.scaling_functions = None
         self._should_stop = False
+        
+
 
     def setup_preparation(
         self, waveform: WaveformData, scaling_functions: Dict[str, Callable]
@@ -553,7 +566,6 @@ class PlotDataWorker(QThread):
             return
 
         try:
-            times = self.waveform.times
             scaled_channels = {}
 
             # Apply scaling to each channel
@@ -570,7 +582,7 @@ class PlotDataWorker(QThread):
                 return
 
             # Emit result
-            self.data_ready.emit(times, scaled_channels, self.waveform.timestamp)
+            self.data_ready.emit(self.waveform.mz, scaled_channels, self.waveform.timestamp)
 
         except Exception as e:
             logging.error(f"Error in plot data preparation thread: {e}", exc_info=True)
@@ -1166,6 +1178,7 @@ class MainWindow(QMainWindow):
             dt=first.dt,
             channels=averaged_channels,
             timestamp=latest_timestamp,
+            trapping_parameters=first.trapping_parameters,
         )
 
     def _apply_mqtt_config_from_state(self):
@@ -1175,6 +1188,7 @@ class MainWindow(QMainWindow):
             broker_host=mqtt_config["broker_host"],
             broker_port=mqtt_config["broker_port"],
             input_topic=mqtt_config["input_topic"],
+            trapping_parameters_topic=mqtt_config["trapping_parameters_topic"],
             output_topic=mqtt_config["output_topic"],
             client_id=mqtt_config.get("client_id", "waveform_viewer"),
             keepalive=mqtt_config.get("keepalive", 60),
@@ -1286,12 +1300,14 @@ class MainWindow(QMainWindow):
         broker_host = self.broker_host_input.text().strip()
         broker_port = self.broker_port_input.value()
         input_topic = self.input_topic_input.text().strip()
+        trapping_parameters_topic = self.trapping_parameters_topic_input.text().strip()
         output_topic = self.output_topic_input.text().strip()
         statistics_topic = self.stats_topic_input.text().strip()
 
         if (
             not broker_host
             or not input_topic
+            or not trapping_parameters_topic
             or not output_topic
             or not statistics_topic
         ):
@@ -1306,11 +1322,18 @@ class MainWindow(QMainWindow):
         self.state["mqtt"]["broker_host"] = broker_host
         self.state["mqtt"]["broker_port"] = broker_port
         self.state["mqtt"]["input_topic"] = input_topic
+        self.state["mqtt"]["trapping_parameters_topic"] = trapping_parameters_topic
         self.state["mqtt"]["output_topic"] = output_topic
         self.state["mqtt"]["statistics_topic"] = statistics_topic
 
         # Apply to MQTT client
-        self.mqtt_client.set_config(broker_host, broker_port, input_topic, output_topic)
+        self.mqtt_client.set_config(
+            broker_host,
+            broker_port,
+            input_topic,
+            trapping_parameters_topic,
+            output_topic,
+        )
 
         # Connect
         self.mqtt_client.connect()
@@ -1397,6 +1420,7 @@ class MainWindow(QMainWindow):
             broker_host=output_broker_host,
             broker_port=output_broker_port,
             input_topic="",  # Not used for output-only client
+            trapping_parameters_topic="",  # Not used for output-only client
             output_topic=output_topic,
             client_id="waveform_viewer_output",
             keepalive=60,
@@ -1423,9 +1447,9 @@ class MainWindow(QMainWindow):
             return
 
         # Add region in the middle of the time range
-        times = self.current_waveform.times
-        mid = (times[0] + times[-1]) / 2
-        width = (times[-1] - times[0]) / 10
+        mz = self.current_waveform.mz
+        mid = (mz[0] + mz[-1]) / 2
+        width = (mz[-1] - mz[0]) / 10
 
         self._add_region_visual(
             mid - width / 2, mid + width / 2, f"Region {len(self.regions) + 1}"
@@ -2083,6 +2107,8 @@ class MainWindow(QMainWindow):
 
     # Slots for MQTT signals
 
+
+
     @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
@@ -2153,7 +2179,7 @@ class MainWindow(QMainWindow):
 
         # Update status
         self.status_bar.showMessage(
-            f"Received waveform with {len(waveform.times)} samples at {waveform.timestamp.strftime('%H:%M:%S')}",
+            f"Received waveform with {len(waveform.mz)} samples at {waveform.timestamp.strftime('%H:%M:%S')}",
             5000,
         )
 
@@ -2200,7 +2226,7 @@ class MainWindow(QMainWindow):
         Args:
             waveform: WaveformData to plot
         """
-        times = waveform.times
+        mz = waveform.mz
 
         # Get sorted channel names for consistent ordering
         channel_names = sorted(waveform.channels.keys())
@@ -2222,11 +2248,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(times, scaled_data)
+                self.plot_curves[ch_name].setData(mz, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(times, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve

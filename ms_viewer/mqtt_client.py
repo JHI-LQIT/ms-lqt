@@ -11,7 +11,13 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from .data_model import PayloadParseError, WaveformData, parse_payload
+from .data_model import (
+    PayloadParseError,
+    WaveformData,
+    parse_payload,
+    parse_trapping_parameters,
+)
+from .trapping_parameters import TrappingParameters
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,7 @@ class MqttClient(QObject):
         self.broker_host = "localhost"
         self.broker_port = 1883
         self.input_topic = "lqt/picoscope/waveform"
+        self.trapping_parameters_topic = "lqt/trapping/parameters"
         self.output_topic = "lqt/lqt_ms/republish"
         self.client_id = "ms_viewer"
         self.keepalive = 60
@@ -55,12 +62,15 @@ class MqttClient(QObject):
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._subscribed = False
+        
+        self.trapping_parameters: Optional[TrappingParameters] = None
 
     def set_config(
         self,
         broker_host: str,
         broker_port: int,
         input_topic: str,
+        trapping_parameters_topic: str,
         output_topic: str,
         client_id: str = "ms_viewer",
         keepalive: int = 60,
@@ -72,20 +82,22 @@ class MqttClient(QObject):
             broker_host: MQTT broker hostname or IP
             broker_port: MQTT broker port
             input_topic: Topic to subscribe to for incoming waveforms
-            output_topic: Topic for publishing waveforms
+            trapping_parameters_topic: Topic to subscribe to for trapping parameters
+            output_topic: Topic to publish outgoing waveforms
             client_id: MQTT client ID
             keepalive: Keep-alive interval in seconds
         """
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.input_topic = input_topic
+        self.trapping_parameters_topic = trapping_parameters_topic
         self.output_topic = output_topic
         self.client_id = client_id
         self.keepalive = keepalive
 
         logger.info(
             f"MQTT config updated: {broker_host}:{broker_port}, "
-            f"input={input_topic}, output={output_topic}"
+            f"input={input_topic}, trapping_parameters={trapping_parameters_topic}, output={output_topic}"
         )
 
     def connect(self):
@@ -160,6 +172,21 @@ class MqttClient(QObject):
 
         except Exception as e:
             error_msg = f"Exception during subscribe: {e}"
+            logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+
+        try:
+            logger.info(
+                f"Subscribing to trapping parameters topic: {self.trapping_parameters_topic}"
+            )
+            result, mid = self._client.subscribe(self.trapping_parameters_topic, qos=1)
+
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                error_msg = f"Failed to subscribe to {self.trapping_parameters_topic}: {mqtt.error_string(result)}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)
+        except Exception as e:
+            error_msg = f"Exception during subscribe to trapping parameters topic: {e}"
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
 
@@ -254,20 +281,33 @@ class MqttClient(QObject):
         Parses the payload and emits waveform_received signal on success,
         or error_occurred signal on failure.
         """
-        try:
-            # Parse the payload
-            waveform = parse_payload(message.payload)
+        if message.topic == self.input_topic:
+            try:
+                # Parse the payload
+                if not self.trapping_parameters:
+                    return
+                waveform = parse_payload(message.payload, self.trapping_parameters)
 
-            # Emit signal with parsed waveform
-            logger.debug(f"Received waveform: {waveform}")
-            self.waveform_received.emit(waveform)
+                # Emit signal with parsed waveform
+                logger.debug(f"Received waveform: {waveform}")
+                self.waveform_received.emit(waveform)
 
-        except PayloadParseError as e:
-            error_msg = f"Failed to parse waveform payload: {e}"
-            logger.error(error_msg)
-            self.error_occurred.emit(error_msg)
+            except PayloadParseError as e:
+                error_msg = f"Failed to parse waveform payload: {e}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)
 
-        except Exception as e:
-            error_msg = f"Unexpected error processing message: {e}"
-            logger.error(error_msg)
-            self.error_occurred.emit(error_msg)
+            except Exception as e:
+                error_msg = f"Unexpected error processing message: {e}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)
+        elif message.topic == self.trapping_parameters_topic:
+            # Handle trapping parameters messages if needed
+            logger.debug("Received message on trapping parameters topic")
+            try:
+                self.trapping_parameters = parse_trapping_parameters(message.payload)
+                logger.debug(f"Received trapping parameters: {self.trapping_parameters}")
+            except Exception as e:
+                error_msg = f"Failed to parse trapping parameters payload: {e}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)

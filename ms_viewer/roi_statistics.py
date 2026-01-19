@@ -458,20 +458,20 @@ class ROIStatisticsCalculator:
             )
 
         # Find indices for the ROI
-        start_idx = np.searchsorted(waveform.times, roi.start_time)
-        end_idx = np.searchsorted(waveform.times, roi.end_time)
+        start_idx = np.searchsorted(waveform.mz, roi.start_time)
+        end_idx = np.searchsorted(waveform.mz, roi.end_time)
 
         # Ensure we have at least one point
-        if start_idx >= len(waveform.times):
-            start_idx = len(waveform.times) - 1
-        if end_idx > len(waveform.times):
-            end_idx = len(waveform.times)
+        if start_idx >= len(waveform.mz):
+            start_idx = len(waveform.mz) - 1
+        if end_idx > len(waveform.mz):
+            end_idx = len(waveform.mz)
         if end_idx <= start_idx:
             end_idx = start_idx + 1
 
         # Get actual time values at boundaries
-        actual_start = waveform.times[start_idx]
-        actual_end = waveform.times[min(end_idx - 1, len(waveform.times) - 1)]
+        actual_start = waveform.mz[start_idx]
+        actual_end = waveform.mz[min(end_idx - 1, len(waveform.mz) - 1)]
 
         logger.debug(
             f"ROI '{roi.name}': requested [{roi.start_time:.6f}, {roi.end_time:.6f}], "
@@ -485,7 +485,7 @@ class ROIStatisticsCalculator:
         for channel_name, channel_data in waveform.channels.items():
             # Extract data within ROI
             roi_data = channel_data[start_idx:end_idx]
-            roi_times = waveform.times[start_idx:end_idx]
+            roi_times = waveform.mz[start_idx:end_idx]
 
             if len(roi_data) == 0:
                 logger.warning(

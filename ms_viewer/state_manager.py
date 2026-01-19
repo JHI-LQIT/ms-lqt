@@ -32,6 +32,7 @@ def load_state(path: str) -> Dict[str, Any]:
             "input_topic": "lqt/picoscope/waveform",
             "output_topic": "lqt/lqt_ms/republish",
             "statistics_topic": "lqt/lqt_ms/statistics",
+            "trapping_parameters_topic": "lqt/trapping/parameters",
             "client_id": "ms_viewer",
             "keepalive": 60,
             # Secondary broker for output/statistics publishing

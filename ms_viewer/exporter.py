@@ -42,7 +42,7 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
             writer.writerow(header)
 
             # Write data rows
-            for i, time_val in enumerate(waveform.times):
+            for i, time_val in enumerate(waveform.mz):
                 row = [time_val]
                 for ch_name in channel_names:
                     row.append(waveform.channels[ch_name][i])

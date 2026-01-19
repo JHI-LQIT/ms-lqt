@@ -27,6 +27,9 @@ from typing import Dict, Tuple
 
 import numpy as np
 
+from .mz_calculator import calc_mz_values
+from .trapping_parameters import TrappingParameters
+
 
 class PayloadParseError(Exception):
     """Exception raised when payload parsing or validation fails."""
@@ -47,7 +50,12 @@ class WaveformData:
     """
 
     def __init__(
-        self, t0: float, dt: float, channels: Dict[str, np.ndarray], timestamp: datetime
+        self,
+        t0: float,
+        dt: float,
+        channels: Dict[str, np.ndarray],
+        timestamp: datetime,
+        trapping_parameters: TrappingParameters,
     ):
         """
         Initialize WaveformData.
@@ -57,7 +65,7 @@ class WaveformData:
             dt: Time step between samples in seconds
             channels: Dictionary mapping channel names to amplitude arrays
             timestamp: Capture timestamp
-
+            trapping_parameters: TrappingParameters
         Raises:
             ValueError: If parameters are invalid
         """
@@ -78,21 +86,100 @@ class WaveformData:
         self.dt = dt
         self.channels = channels
         self.timestamp = timestamp
-
+        self.trapping_parameters = trapping_parameters
         # Compute time axis
         N = lengths[0]
-        self.times = t0 + dt * np.arange(N)
+        self.mz = calc_mz_values(trapping_parameters, t0, dt, N)
 
     def __repr__(self):
         return (
             f"WaveformData(t0={self.t0}, dt={self.dt}, "
             f"channels={list(self.channels.keys())}, "
-            f"n_samples={len(self.times)}, "
-            f"timestamp={self.timestamp.isoformat()})"
+            f"n_samples={len(self.mz)}, "
+            f"timestamp={self.timestamp.isoformat()}, "
+            f"trapping_parameters={self.trapping_parameters})"
         )
 
 
-def parse_payload(payload_bytes: bytes) -> WaveformData:
+def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
+    """
+    Parse MQTT payload into TrappingParameters object.
+
+    Args:
+        payload_bytes (bytes): JSON-encoded payload
+
+    Returns:
+        TrappingParameters: Parsed trapping parameters
+
+    Raises:
+        PayloadParseError: If payload is malformed or validation fails
+
+    Expected JSON format:
+    {
+        "injection_time": 10.0,
+        "secular_excitation_delay": 20.0,
+        "trapping_time": 80.0,
+        "frequency_begin": 165.0,
+        "frequency_end": 180.0,
+        "enable_frequency_sweep": true,
+        "rf_amplitude_begin": 50.0,
+        "rf_amplitude_end": 50.0,
+        "enable_rf_amplitude_sweep": false
+    }
+    """
+
+    try:
+        # Decode UTF-8 to string
+        payload_str = payload_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PayloadParseError(f"Failed to decode payload as UTF-8: {e}")
+
+    try:
+        # Parse JSON
+        data = json.loads(payload_str)
+    except json.JSONDecodeError as e:
+        raise PayloadParseError(f"Failed to parse JSON: {e}")
+
+    # Validate required fields
+    required_fields = [
+        "injection_time",
+        "secular_excitation_delay",
+        "trapping_time",
+        "frequency_begin",
+        "frequency_end",
+        "enable_frequency_sweep",
+        "rf_amplitude_begin",
+        "rf_amplitude_end",
+        "enable_rf_amplitude_sweep",
+    ]
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise PayloadParseError(f"Missing required fields: {missing_fields}")
+    try:
+        params = TrappingParameters(
+            secular_excitation_begin_ms=float(
+                data["injection_time"] + data["secular_excitation_delay"]
+            ),
+            secular_excitation_end_ms=float(
+                data["injection_time"]
+                + data["secular_excitation_delay"]
+                + data["trapping_time"]
+            ),
+            frequency_begin_khz=float(data["frequency_begin"]),
+            frequency_end_khz=float(data["frequency_end"]),
+            frequency_sweep=bool(data["enable_frequency_sweep"]),
+            rf_amplitude_begin_v0p=float(data["rf_amplitude_begin"]),
+            rf_amplitude_end_v0p=float(data["rf_amplitude_end"]),
+            rf_amplitude_sweep=bool(data["enable_rf_amplitude_sweep"]),
+        )
+    except (ValueError, TypeError) as e:
+        raise PayloadParseError(f"Invalid parameter value: {e}")
+    return params
+
+
+def parse_payload(
+    payload_bytes: bytes, trapping_parameters: TrappingParameters
+) -> WaveformData:
     """
     Parse MQTT payload bytes into a WaveformData object.
 
@@ -114,12 +201,14 @@ def parse_payload(payload_bytes: bytes) -> WaveformData:
     """
     # Check if payload is binary or JSON
     if len(payload_bytes) >= 4 and payload_bytes[:4] == b"WAVE":
-        return _parse_binary_payload(payload_bytes)
+        return _parse_binary_payload(payload_bytes, trapping_parameters)
     else:
-        return _parse_json_payload(payload_bytes)
+        return _parse_json_payload(payload_bytes, trapping_parameters)
 
 
-def _parse_json_payload(payload_bytes: bytes) -> WaveformData:
+def _parse_json_payload(
+    payload_bytes: bytes, trapping_parameters: TrappingParameters
+) -> WaveformData:
     """
     Parse JSON-encoded MQTT payload.
 
@@ -233,12 +322,20 @@ def _parse_json_payload(payload_bytes: bytes) -> WaveformData:
 
     # Create and return WaveformData
     try:
-        return WaveformData(t0=t0, dt=dt, channels=channels, timestamp=timestamp)
+        return WaveformData(
+            t0=t0,
+            dt=dt,
+            channels=channels,
+            timestamp=timestamp,
+            trapping_parameters=trapping_parameters,
+        )
     except ValueError as e:
         raise PayloadParseError(f"Failed to create WaveformData: {e}")
 
 
-def _parse_binary_payload(payload_bytes: bytes) -> WaveformData:
+def _parse_binary_payload(
+    payload_bytes: bytes, trapping_parameters: TrappingParameters
+) -> WaveformData:
     """
     Parse binary-encoded MQTT payload.
 
@@ -332,7 +429,13 @@ def _parse_binary_payload(payload_bytes: bytes) -> WaveformData:
             channels[channel_name] = channel_data
 
         # Create and return WaveformData
-        return WaveformData(t0=t0, dt=dt, channels=channels, timestamp=timestamp)
+        return WaveformData(
+            t0=t0,
+            dt=dt,
+            channels=channels,
+            timestamp=timestamp,
+            trapping_parameters=trapping_parameters,
+        )
 
     except struct.error as e:
         raise PayloadParseError(f"Binary unpacking error: {e}")
@@ -370,7 +473,7 @@ def encode_payload(waveform: WaveformData) -> bytes:
     # Get sorted channel names for consistent ordering
     channel_names = sorted(waveform.channels.keys())
     n_channels = len(channel_names)
-    n_samples = len(waveform.times)
+    n_samples = len(waveform.mz)
 
     # Convert timestamp to Unix time in microseconds
     timestamp_us = int(waveform.timestamp.timestamp() * 1e6)
