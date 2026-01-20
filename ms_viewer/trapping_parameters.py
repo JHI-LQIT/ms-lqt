@@ -13,3 +13,5 @@ class TrappingParameters:
     rf_amplitude_begin_v0p: float
     rf_amplitude_end_v0p: float
     rf_amplitude_sweep: bool
+    r0_cm: float
+    f_RF_MHz: float

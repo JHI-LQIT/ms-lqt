@@ -11,12 +11,7 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from .data_model import (
-    PayloadParseError,
-    WaveformData,
-    parse_payload,
-    parse_trapping_parameters,
-)
+from .data_model import PayloadParseError, parse_payload, parse_trapping_parameters
 from .trapping_parameters import TrappingParameters
 
 logger = logging.getLogger(__name__)
@@ -62,7 +57,7 @@ class MqttClient(QObject):
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._subscribed = False
-        
+
         self.trapping_parameters: Optional[TrappingParameters] = None
 
     def set_config(
@@ -306,7 +301,9 @@ class MqttClient(QObject):
             logger.debug("Received message on trapping parameters topic")
             try:
                 self.trapping_parameters = parse_trapping_parameters(message.payload)
-                logger.debug(f"Received trapping parameters: {self.trapping_parameters}")
+                logger.debug(
+                    f"Received trapping parameters: {self.trapping_parameters}"
+                )
             except Exception as e:
                 error_msg = f"Failed to parse trapping parameters payload: {e}"
                 logger.error(error_msg)

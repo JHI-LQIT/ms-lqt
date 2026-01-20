@@ -537,7 +537,7 @@ class PlotDataWorker(QThread):
     """Worker thread for preparing plot data (scaling) to avoid blocking the GUI."""
 
     # Signal emitted when preparation is complete
-    # Emits: (times, scaled_channels_dict, timestamp)
+    # Emits: (mz, scaled_channels_dict, timestamp)
     data_ready = pyqtSignal(object, dict, object)
 
     def __init__(self, parent=None):
@@ -545,8 +545,6 @@ class PlotDataWorker(QThread):
         self.waveform = None
         self.scaling_functions = None
         self._should_stop = False
-        
-
 
     def setup_preparation(
         self, waveform: WaveformData, scaling_functions: Dict[str, Callable]
@@ -582,7 +580,9 @@ class PlotDataWorker(QThread):
                 return
 
             # Emit result
-            self.data_ready.emit(self.waveform.mz, scaled_channels, self.waveform.timestamp)
+            self.data_ready.emit(
+                self.waveform.mz, scaled_channels, self.waveform.timestamp
+            )
 
         except Exception as e:
             logging.error(f"Error in plot data preparation thread: {e}", exc_info=True)
@@ -808,8 +808,8 @@ class MainWindow(QMainWindow):
         """Set up the PyQtGraph plot widget."""
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
-        self.plot_widget.setLabel("left", "Amplitude", units="V")
-        self.plot_widget.setLabel("bottom", "Time", units="s")
+        self.plot_widget.setLabel("left", "Amplitude", units="mV")
+        self.plot_widget.setLabel("bottom", "m/z", units="Da")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
         self.plot_widget.setTitle("No data received yet")
@@ -883,9 +883,9 @@ class MainWindow(QMainWindow):
                 "Peak-Peak",
                 "Area",
                 "Points",
-                "Time Span",
-                "Start",
-                "End",
+                "m/z Span",
+                "Start m/z",
+                "End m/z",
             ]
         )
         header = self.statistics_table.horizontalHeader()
@@ -1204,16 +1204,18 @@ class MainWindow(QMainWindow):
                 region_data.get("name", "Region"),
             )
 
-    def _add_region_visual(self, start: float, end: float, name: str = "Region"):
+    def _add_region_visual(self, start_mz: float, end_mz: float, name: str = "Region"):
         """
         Add a visual region to the plot.
 
         Args:
-            start: Start time
-            end: End time
+            start_mz: Start m/z
+            end_mz: End m/z
             name: Region name
         """
-        region = pg.LinearRegionItem(values=[start, end], brush=(100, 100, 255, 50))
+        region = pg.LinearRegionItem(
+            values=[start_mz, end_mz], brush=(100, 100, 255, 50)
+        )
         self.plot_widget.addItem(region)
         self.regions.append(region)
 
@@ -1222,8 +1224,8 @@ class MainWindow(QMainWindow):
         self.region_table.blockSignals(True)
         self.region_table.insertRow(row)
         self.region_table.setItem(row, 0, QTableWidgetItem(name))
-        self.region_table.setItem(row, 1, QTableWidgetItem(f"{start:.6f}"))
-        self.region_table.setItem(row, 2, QTableWidgetItem(f"{end:.6f}"))
+        self.region_table.setItem(row, 1, QTableWidgetItem(f"{start_mz:.6f}"))
+        self.region_table.setItem(row, 2, QTableWidgetItem(f"{end_mz:.6f}"))
         self.region_table.blockSignals(False)
 
         # Connect region change to table update
@@ -1254,7 +1256,7 @@ class MainWindow(QMainWindow):
 
         region = self.regions[row]
 
-        # Only update if start or end time was changed
+        # Only update if start or end m/z was changed
         if column == 1 or column == 2:
             try:
                 # Get current values from table
@@ -1270,7 +1272,7 @@ class MainWindow(QMainWindow):
 
                 # Validate
                 if start >= end:
-                    raise ValueError("Start time must be less than end time")
+                    raise ValueError("Start m/z must be less than end m/z")
 
                 # Update the region (will trigger _update_region_table, but signals are blocked)
                 region.setRegion([start, end])
@@ -1290,7 +1292,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self,
                     "Invalid Value",
-                    f"Invalid region time: {e}",
+                    f"Invalid region m/z: {e}",
                 )
 
     # Slots for user actions
@@ -1446,7 +1448,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Add region in the middle of the time range
+        # Add region in the middle of the m/z range
         mz = self.current_waveform.mz
         mid = (mz[0] + mz[-1]) / 2
         width = (mz[-1] - mz[0]) / 10
@@ -1625,7 +1627,7 @@ class MainWindow(QMainWindow):
                 if item is not None:
                     name = item.text()
 
-            rois.append(ROIDefinition(name=name, start_time=start, end_time=end))
+            rois.append(ROIDefinition(name=name, start_mz=start, end_mz=end))
 
         # Build scaling functions dictionary with captured scaling parameters (thread-safe)
         scaling_functions = {}
@@ -1679,13 +1681,13 @@ class MainWindow(QMainWindow):
 
     def _on_plot_data_ready(
         self,
-        times: np.ndarray,
+        mz: np.ndarray,
         scaled_channels: Dict[str, np.ndarray],
         timestamp: datetime,
     ):
         """Handle completion of plot data preparation from worker thread."""
         # Update plot with prepared data
-        self._update_plot_with_scaled_data(times, scaled_channels, timestamp)
+        self._update_plot_with_scaled_data(mz, scaled_channels, timestamp)
 
         # If another preparation is pending, trigger it
         if self._plot_data_pending and self._pending_plot_waveform is not None:
@@ -1769,9 +1771,9 @@ class MainWindow(QMainWindow):
             "Peak-Peak",
             "Area",
             "Points",
-            "Time Span",
-            "Start",
-            "End",
+            "m/z Span",
+            "Start m/z",
+            "End m/z",
         ]
         all_columns = base_columns + custom_metric_names
 
@@ -1829,15 +1831,15 @@ class MainWindow(QMainWindow):
             )
             col += 1
             self.statistics_table.setItem(
-                row_idx, col, QTableWidgetItem(f"{stats.time_span:.6f}")
+                row_idx, col, QTableWidgetItem(f"{stats.mz_span:.6f}")
             )
             col += 1
             self.statistics_table.setItem(
-                row_idx, col, QTableWidgetItem(f"{stats.start_time:.6f}")
+                row_idx, col, QTableWidgetItem(f"{stats.start_mz:.6f}")
             )
             col += 1
             self.statistics_table.setItem(
-                row_idx, col, QTableWidgetItem(f"{stats.end_time:.6f}")
+                row_idx, col, QTableWidgetItem(f"{stats.end_mz:.6f}")
             )
             col += 1
 
@@ -1875,9 +1877,9 @@ class MainWindow(QMainWindow):
                 "peak_to_peak": "peak_to_peak",
                 "area": "area_under_curve",
                 "n_points": "n_points",
-                "time_span": "time_span",
-                "start_time": "start_time",
-                "end_time": "end_time",
+                "mz_span": "mz_span",
+                "start_mz": "start_mz",
+                "end_mz": "end_mz",
             }
 
             # Add data points for each built-in statistic using metric names as keys
@@ -2107,8 +2109,6 @@ class MainWindow(QMainWindow):
 
     # Slots for MQTT signals
 
-
-
     @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
@@ -2264,7 +2264,7 @@ class MainWindow(QMainWindow):
 
     def _update_plot_with_scaled_data(
         self,
-        times: np.ndarray,
+        mz: np.ndarray,
         scaled_channels: Dict[str, np.ndarray],
         timestamp: datetime,
     ):
@@ -2272,7 +2272,7 @@ class MainWindow(QMainWindow):
         Update the plot with pre-scaled channel data (from worker thread).
 
         Args:
-            times: Time array
+            mz: m/z array
             scaled_channels: Dictionary of channel_name -> scaled_data
             timestamp: Waveform timestamp
         """
@@ -2292,11 +2292,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(times, scaled_data)
+                self.plot_curves[ch_name].setData(mz, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(times, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve

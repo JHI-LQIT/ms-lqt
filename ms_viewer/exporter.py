@@ -20,8 +20,8 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
     Export waveform data to a CSV file.
 
     The CSV format is:
-    - First row: header with column names (time, ch1, ch2, ...)
-    - Subsequent rows: time value followed by amplitude for each channel
+    - First row: header with column names (mz, ch1, ch2, ...)
+    - Subsequent rows: mz value followed by amplitude for each channel
 
     Args:
         path: Path to the output CSV file
@@ -36,14 +36,14 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
             channel_names = sorted(waveform.channels.keys())
 
             # Create header
-            header = ["time"] + channel_names
+            header = ["mz"] + channel_names
 
             writer = csv.writer(csvfile)
             writer.writerow(header)
 
             # Write data rows
-            for i, time_val in enumerate(waveform.mz):
-                row = [time_val]
+            for i, mz_val in enumerate(waveform.mz):
+                row = [mz_val]
                 for ch_name in channel_names:
                     row.append(waveform.channels[ch_name][i])
                 writer.writerow(row)

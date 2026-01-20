@@ -30,8 +30,8 @@ class ROIStatistics:
     Attributes:
         roi_name: Name of the region of interest
         channel_name: Name of the channel
-        start_time: Start time of the ROI in seconds
-        end_time: End time of the ROI in seconds
+        start_mz: Start m/z of the ROI
+        end_mz: End m/z of the ROI
         mean: Mean amplitude value
         median: Median amplitude value
         std_dev: Standard deviation of amplitude
@@ -47,8 +47,8 @@ class ROIStatistics:
 
     roi_name: str
     channel_name: str
-    start_time: float
-    end_time: float
+    start_mz: float
+    end_mz: float
     mean: float
     median: float
     std_dev: float
@@ -57,7 +57,7 @@ class ROIStatistics:
     peak_to_peak: float
     area_under_curve: float
     n_points: int
-    time_span: float
+    mz_span: float
     timestamp: datetime
     custom_metrics: Dict[str, float] = field(default_factory=dict)
 
@@ -66,8 +66,8 @@ class ROIStatistics:
         result = {
             "roi_name": self.roi_name,
             "channel_name": self.channel_name,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
+            "start_mz": self.start_mz,
+            "end_mz": self.end_mz,
             "mean": self.mean,
             "median": self.median,
             "std_dev": self.std_dev,
@@ -76,7 +76,7 @@ class ROIStatistics:
             "peak_to_peak": self.peak_to_peak,
             "area_under_curve": self.area_under_curve,
             "n_points": self.n_points,
-            "time_span": self.time_span,
+            "mz_span": self.mz_span,
             "timestamp": self.timestamp.isoformat(),
         }
         result.update(self.custom_metrics)
@@ -90,13 +90,13 @@ class ROIDefinition:
 
     Attributes:
         name: Name of the ROI
-        start_time: Start time in seconds
-        end_time: End time in seconds
+        start_mz: Start m/z value
+        end_mz: End m/z value
     """
 
     name: str
-    start_time: float
-    end_time: float
+    start_mz: float
+    end_mz: float
 
 
 class CustomStatisticPlugin(ABC):
@@ -110,7 +110,7 @@ class CustomStatisticPlugin(ABC):
     @abstractmethod
     def calculate(
         self,
-        times: np.ndarray,
+        mz: np.ndarray,
         amplitudes: np.ndarray,
         roi_start: float,
         roi_end: float,
@@ -119,10 +119,10 @@ class CustomStatisticPlugin(ABC):
         Calculate custom statistics for an ROI.
 
         Args:
-            times: NumPy array of time values for the ROI
+            mz: NumPy array of m/z values for the ROI
             amplitudes: NumPy array of amplitude values for the ROI
-            roi_start: Start time of the ROI
-            roi_end: End time of the ROI
+            roi_start: Start m/z of the ROI
+            roi_end: End m/z of the ROI
 
         Returns:
             Dictionary mapping metric names to their calculated values.
@@ -192,12 +192,12 @@ class ExpressionStatistic:
             logger.error(f"Failed to compile expression '{name}': {e}")
             raise
 
-    def calculate(self, times: np.ndarray, amplitudes: np.ndarray) -> float:
+    def calculate(self, mz: np.ndarray, amplitudes: np.ndarray) -> float:
         """
         Evaluate the expression on the given data.
 
         Args:
-            times: Time values
+            mz: m/z values
             amplitudes: Amplitude values
 
         Returns:
@@ -222,16 +222,16 @@ class ExpressionStatistic:
 
         # Allow scipy if available
         try:
-            import scipy
-            import scipy.signal
-            import scipy.stats
+            import scipy  # type: ignore
+            import scipy.signal  # type: ignore
+            import scipy.stats  # type: ignore
 
             safe_globals["scipy"] = scipy
         except ImportError:
             pass
 
         local_vars = {
-            "times": times,
+            "mz": mz,
             "data": amplitudes,
             "amplitudes": amplitudes,
         }
@@ -264,7 +264,7 @@ class ROIStatisticsCalculator:
         "peak_to_peak",
         "area",
         "n_points",
-        "time_span",
+        "mz_span",
     ]
 
     def __init__(
@@ -376,8 +376,8 @@ class ROIStatisticsCalculator:
                 self.module = mod
                 self.info = getattr(mod, "PLUGIN_INFO", {})
 
-            def calculate(self, times, amplitudes, roi_start, roi_end):
-                return self.module.calculate(times, amplitudes, roi_start, roi_end)
+            def calculate(self, mz, amplitudes, roi_start, roi_end):
+                return self.module.calculate(mz, amplitudes, roi_start, roi_end)
 
             def get_metrics(self):
                 return self.info.get("metrics", [])
@@ -450,16 +450,16 @@ class ROIStatisticsCalculator:
             List of ROIStatistics, one per channel
 
         Raises:
-            ValueError: If ROI times are outside waveform time range
+            ValueError: If ROI m/z values are outside waveform m/z range
         """
-        if roi.start_time >= roi.end_time:
+        if roi.start_mz >= roi.end_mz:
             raise ValueError(
-                f"ROI start time ({roi.start_time}) must be less than end time ({roi.end_time})"
+                f"ROI start m/z ({roi.start_mz}) must be less than end m/z ({roi.end_mz})"
             )
 
         # Find indices for the ROI
-        start_idx = np.searchsorted(waveform.mz, roi.start_time)
-        end_idx = np.searchsorted(waveform.mz, roi.end_time)
+        start_idx = np.searchsorted(waveform.mz, roi.start_mz)
+        end_idx = np.searchsorted(waveform.mz, roi.end_mz)
 
         # Ensure we have at least one point
         if start_idx >= len(waveform.mz):
@@ -469,12 +469,12 @@ class ROIStatisticsCalculator:
         if end_idx <= start_idx:
             end_idx = start_idx + 1
 
-        # Get actual time values at boundaries
+        # Get actual m/z values at boundaries
         actual_start = waveform.mz[start_idx]
         actual_end = waveform.mz[min(end_idx - 1, len(waveform.mz) - 1)]
 
         logger.debug(
-            f"ROI '{roi.name}': requested [{roi.start_time:.6f}, {roi.end_time:.6f}], "
+            f"ROI '{roi.name}': requested [{roi.start_mz:.6f}, {roi.end_mz:.6f}], "
             f"actual [{actual_start:.6f}, {actual_end:.6f}], "
             f"indices [{start_idx}, {end_idx})"
         )
@@ -485,7 +485,7 @@ class ROIStatisticsCalculator:
         for channel_name, channel_data in waveform.channels.items():
             # Extract data within ROI
             roi_data = channel_data[start_idx:end_idx]
-            roi_times = waveform.mz[start_idx:end_idx]
+            roi_mz = waveform.mz[start_idx:end_idx]
 
             if len(roi_data) == 0:
                 logger.warning(
@@ -523,20 +523,20 @@ class ROIStatisticsCalculator:
 
             # Calculate area under curve using trapezoidal integration
             area = (
-                float(np.trapezoid(roi_data, roi_times))
+                float(np.trapezoid(roi_data, roi_mz))
                 if "area" in self.enabled_builtin_stats
                 else 0.0
             )
 
-            # Calculate time span
-            time_span = actual_end - actual_start
+            # Calculate m/z span
+            mz_span = actual_end - actual_start
 
             # Calculate custom statistics from plugins
             custom_metrics = {}
             for plugin in self.plugins:
                 try:
                     plugin_results = plugin.calculate(
-                        roi_times, roi_data, actual_start, actual_end
+                        roi_mz, roi_data, actual_start, actual_end
                     )
                     custom_metrics.update(plugin_results)
                 except Exception as e:
@@ -548,7 +548,7 @@ class ROIStatisticsCalculator:
             # Calculate expression-based statistics
             for expr_stat in self.expression_stats:
                 try:
-                    result = expr_stat.calculate(roi_times, roi_data)
+                    result = expr_stat.calculate(roi_mz, roi_data)
                     custom_metrics[expr_stat.name] = result
                 except Exception as e:
                     logger.error(
@@ -559,8 +559,8 @@ class ROIStatisticsCalculator:
             statistics = ROIStatistics(
                 roi_name=roi.name,
                 channel_name=channel_name,
-                start_time=actual_start,
-                end_time=actual_end,
+                start_mz=actual_start,
+                end_mz=actual_end,
                 mean=mean_val,
                 median=median_val,
                 std_dev=std_dev_val,
@@ -571,9 +571,7 @@ class ROIStatisticsCalculator:
                 n_points=(
                     len(roi_data) if "n_points" in self.enabled_builtin_stats else 0
                 ),
-                time_span=(
-                    time_span if "time_span" in self.enabled_builtin_stats else 0.0
-                ),
+                mz_span=(mz_span if "time_span" in self.enabled_builtin_stats else 0.0),
                 timestamp=waveform.timestamp,
                 custom_metrics=custom_metrics,
             )

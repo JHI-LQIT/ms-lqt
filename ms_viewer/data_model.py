@@ -89,7 +89,7 @@ class WaveformData:
         self.trapping_parameters = trapping_parameters
         # Compute time axis
         N = lengths[0]
-        self.mz = calc_mz_values(trapping_parameters, t0, dt, N)
+        self.mz = calc_mz_values(trapping_parameters, dt, N)
 
     def __repr__(self):
         return (
@@ -151,6 +151,8 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
         "rf_amplitude_begin",
         "rf_amplitude_end",
         "enable_rf_amplitude_sweep",
+        "r0_cm",
+        "f_RF_MHz",
     ]
     missing_fields = [field for field in required_fields if field not in data]
     if missing_fields:
@@ -171,6 +173,8 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
             rf_amplitude_begin_v0p=float(data["rf_amplitude_begin"]),
             rf_amplitude_end_v0p=float(data["rf_amplitude_end"]),
             rf_amplitude_sweep=bool(data["enable_rf_amplitude_sweep"]),
+            r0_cm=float(data["r0_cm"]),
+            f_RF_MHz=float(data["f_RF_MHz"]),
         )
     except (ValueError, TypeError) as e:
         raise PayloadParseError(f"Invalid parameter value: {e}")
