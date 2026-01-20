@@ -58,14 +58,14 @@ class WaveformData:
         self.trapping_parameters = trapping_parameters
         # Compute time axis
         N = lengths[0]
-        self.mz, start_index = self.calc_mz_values(trapping_parameters, dt, N)
+        self.mz, start_index, n_samples = self.calc_mz_values(trapping_parameters, dt, N)
 
         # Cut channels to match m/z length and sort by m/z
         sorted_indices = np.argsort(self.mz)
         self.mz = self.mz[sorted_indices]
         for key in self.channels:
             self.channels[key] = self.channels[key][
-                start_index : start_index + len(self.mz)
+                start_index : start_index + n_samples
             ][sorted_indices]
 
 
@@ -80,7 +80,7 @@ class WaveformData:
 
     def calc_mz_values(
         self, trapping_params: TrappingParameters, dt: float, N: int
-    ) -> tuple[np.ndarray, int]:
+    ) -> tuple[np.ndarray, int, int]:
         """
         Calculate m/z values from trapping parameters and time data.
 
@@ -92,12 +92,18 @@ class WaveformData:
         Returns:
             np.ndarray: The calculated m/z values.
             int: The start index used in the calculation.
+            int: The number of samples used in the calculation.
         """
 
         start_idx = int(
             np.ceil(trapping_params.secular_excitation_begin_ms / (1000.0 * dt))
         )
-        n_samples = N - start_idx
+        end_idx = int(
+            np.floor(trapping_params.secular_excitation_end_ms / (1000.0 * dt))
+        )
+        if end_idx > N:
+            end_idx = N
+        n_samples = end_idx - start_idx
 
         f_begin = trapping_params.frequency_begin_khz
         f_AC = (
@@ -115,4 +121,4 @@ class WaveformData:
 
         multiplier = 34.45 / (trapping_params.r0_cm**2 * trapping_params.f_RF_MHz)
 
-        return multiplier * rf_amp / f_AC, start_idx
+        return multiplier * rf_amp / f_AC, start_idx, n_samples
