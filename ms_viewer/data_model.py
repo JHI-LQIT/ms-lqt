@@ -23,82 +23,17 @@ Binary format specification:
 import json
 import struct
 from datetime import datetime, timezone
-from typing import Dict, Tuple
 
 import numpy as np
 
-from .mz_calculator import calc_mz_values
 from .trapping_parameters import TrappingParameters
+from .waveform_data import WaveformData
 
 
 class PayloadParseError(Exception):
     """Exception raised when payload parsing or validation fails."""
 
     pass
-
-
-class WaveformData:
-    """
-    Container for oscilloscope waveform data.
-
-    Attributes:
-        t0 (float): Start time in seconds
-        dt (float): Time step between samples in seconds
-        times (np.ndarray): Computed time values for each sample
-        channels (Dict[str, np.ndarray]): Dictionary of channel names to amplitude arrays
-        timestamp (datetime): Timestamp when the waveform was captured
-    """
-
-    def __init__(
-        self,
-        t0: float,
-        dt: float,
-        channels: Dict[str, np.ndarray],
-        timestamp: datetime,
-        trapping_parameters: TrappingParameters,
-    ):
-        """
-        Initialize WaveformData.
-
-        Args:
-            t0: Start time in seconds
-            dt: Time step between samples in seconds
-            channels: Dictionary mapping channel names to amplitude arrays
-            timestamp: Capture timestamp
-            trapping_parameters: TrappingParameters
-        Raises:
-            ValueError: If parameters are invalid
-        """
-        if dt <= 0:
-            raise ValueError("dt must be positive")
-
-        if not channels:
-            raise ValueError("At least one channel must be provided")
-
-        # Validate all channels have the same length
-        lengths = [len(data) for data in channels.values()]
-        if len(set(lengths)) > 1:
-            raise ValueError(
-                f"All channels must have equal length. Got lengths: {lengths}"
-            )
-
-        self.t0 = t0
-        self.dt = dt
-        self.channels = channels
-        self.timestamp = timestamp
-        self.trapping_parameters = trapping_parameters
-        # Compute time axis
-        N = lengths[0]
-        self.mz = calc_mz_values(trapping_parameters, dt, N)
-
-    def __repr__(self):
-        return (
-            f"WaveformData(t0={self.t0}, dt={self.dt}, "
-            f"channels={list(self.channels.keys())}, "
-            f"n_samples={len(self.mz)}, "
-            f"timestamp={self.timestamp.isoformat()}, "
-            f"trapping_parameters={self.trapping_parameters})"
-        )
 
 
 def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
