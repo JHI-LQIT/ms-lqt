@@ -103,7 +103,6 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
             ),
             secular_excitation_end_ms=float(
                 data["injection_time"]
-                + data["secular_excitation_delay"]
                 + data["trapping_time"]
             ),
             frequency_begin_khz=float(data["frequency_begin"]),
