@@ -281,6 +281,8 @@ class MqttClient(QObject):
                 # Parse the payload
                 if not self.trapping_parameters:
                     return
+                if not self.trapping_parameters.secular_excitation_enabled:
+                    return
                 waveform = parse_payload(message.payload, self.trapping_parameters)
 
                 # Emit signal with parsed waveform

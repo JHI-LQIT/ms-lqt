@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class TrappingParameters:
     """Data class for trapping parameters."""
 
+    secular_excitation_enabled: bool
     secular_excitation_begin_ms: float
     secular_excitation_end_ms: float
     frequency_begin_khz: float

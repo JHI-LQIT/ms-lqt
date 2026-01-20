@@ -142,6 +142,8 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
 
     # Validate required fields
     required_fields = [
+        "enable_trapping",
+        "secular_on",
         "injection_time",
         "secular_excitation_delay",
         "trapping_time",
@@ -159,6 +161,8 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
         raise PayloadParseError(f"Missing required fields: {missing_fields}")
     try:
         params = TrappingParameters(
+            secular_excitation_enabled=bool(data["secular_on"])
+            and bool(data["enable_trapping"]),
             secular_excitation_begin_ms=float(
                 data["injection_time"] + data["secular_excitation_delay"]
             ),
