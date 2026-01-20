@@ -60,11 +60,14 @@ class WaveformData:
         N = lengths[0]
         self.mz, start_index = self.calc_mz_values(trapping_parameters, dt, N)
 
-        # Cut channels to match m/z length
+        # Cut channels to match m/z length and sort by m/z
+        sorted_indices = np.argsort(self.mz)
+        self.mz = self.mz[sorted_indices]
         for key in self.channels:
             self.channels[key] = self.channels[key][
                 start_index : start_index + len(self.mz)
-            ]
+            ][sorted_indices]
+
 
     def __repr__(self):
         return (

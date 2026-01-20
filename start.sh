@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick start script for MQTT Oscilloscope Waveform Viewer
 
-cd /home/jasik/mqtt-oscilloscope-gui/
+cd /home/jasik/ms-lqt/
 
 echo "======================================"
 echo "MQTT Oscilloscope Waveform Viewer"
