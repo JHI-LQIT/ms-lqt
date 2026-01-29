@@ -1329,10 +1329,19 @@ class MainWindow(QMainWindow):
         
         mz = self.current_waveform.mz
         
-        # Use interpolation to convert x-axis values back to m/z
-        # This handles inverse relationships correctly
-        start_mz = float(np.interp(start_x, x_data, mz))
-        end_mz = float(np.interp(end_x, x_data, mz))
+        # Check if x_data is monotonically increasing or decreasing
+        # For interp to work, x-values must be monotonically increasing
+        if len(x_data) > 1 and x_data[0] > x_data[-1]:
+            # x_data is decreasing (e.g., f_AC decreases as m/z increases)
+            # Reverse both arrays for interpolation
+            x_data_sorted = x_data[::-1]
+            mz_sorted = mz[::-1]
+            start_mz = float(np.interp(start_x, x_data_sorted, mz_sorted))
+            end_mz = float(np.interp(end_x, x_data_sorted, mz_sorted))
+        else:
+            # x_data is increasing (normal case)
+            start_mz = float(np.interp(start_x, x_data, mz))
+            end_mz = float(np.interp(end_x, x_data, mz))
         
         return start_mz, end_mz
     
