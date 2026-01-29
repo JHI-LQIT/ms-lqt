@@ -1295,21 +1295,20 @@ class MainWindow(QMainWindow):
         if x_axis_mode == "mz":
             return start_mz, end_mz
         
-        # Find closest indices in m/z array
+        # Use interpolation to convert m/z to x-axis values
+        # This handles inverse relationships correctly (e.g., f_AC decreases as m/z increases)
         mz = self.current_waveform.mz
-        start_idx = np.searchsorted(mz, start_mz)
-        end_idx = np.searchsorted(mz, end_mz)
-        
-        # Clamp to valid range
-        start_idx = max(0, min(start_idx, len(mz) - 1))
-        end_idx = max(0, min(end_idx, len(mz) - 1))
         
         if x_axis_mode == "frequency":
             x_data = self.current_waveform.f_AC_kHz
         else:  # rf_amplitude
             x_data = self.current_waveform.rf_amp_V0p
         
-        return x_data[start_idx], x_data[end_idx]
+        # Interpolate to find x-axis values corresponding to m/z bounds
+        start_x = float(np.interp(start_mz, mz, x_data))
+        end_x = float(np.interp(end_mz, mz, x_data))
+        
+        return start_x, end_x
     
     def _xaxis_to_mz(self, start_x: float, end_x: float) -> tuple:
         """Convert current x-axis bounds to m/z values."""
@@ -1328,16 +1327,14 @@ class MainWindow(QMainWindow):
         else:  # rf_amplitude
             x_data = self.current_waveform.rf_amp_V0p
         
-        # Find closest indices in x-axis array
-        start_idx = np.searchsorted(x_data, start_x)
-        end_idx = np.searchsorted(x_data, end_x)
-        
-        # Clamp to valid range
         mz = self.current_waveform.mz
-        start_idx = max(0, min(start_idx, len(mz) - 1))
-        end_idx = max(0, min(end_idx, len(mz) - 1))
         
-        return mz[start_idx], mz[end_idx]
+        # Use interpolation to convert x-axis values back to m/z
+        # This handles inverse relationships correctly
+        start_mz = float(np.interp(start_x, x_data, mz))
+        end_mz = float(np.interp(end_x, x_data, mz))
+        
+        return start_mz, end_mz
     
     def _update_region_positions(self):
         """Update all region positions when x-axis mode changes."""
@@ -1345,7 +1342,10 @@ class MainWindow(QMainWindow):
             if region in self.region_mz_bounds:
                 start_mz, end_mz = self.region_mz_bounds[region]
                 start_x, end_x = self._mz_to_xaxis(start_mz, end_mz)
+                # Block signals to prevent triggering _update_region_table during programmatic update
+                region.blockSignals(True)
                 region.setRegion([start_x, end_x])
+                region.blockSignals(False)
     
     def _restore_regions(self):
         """Restore regions from saved state."""
