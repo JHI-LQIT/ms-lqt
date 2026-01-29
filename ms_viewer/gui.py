@@ -2309,8 +2309,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
+        first_waveform = self.current_waveform is None
         self.current_waveform = waveform
         self._waveform_counter += 1
+
+        # Update region positions on first waveform if we have restored regions
+        if first_waveform and len(self.regions) > 0:
+            self._update_region_positions()
 
         # Update scaling controls for new channels (only if changed)
         if (
@@ -2525,13 +2530,19 @@ class MainWindow(QMainWindow):
         # Save splitter position
         self.state["gui"]["splitter_sizes"] = self.plots_splitter.sizes()
 
-        # Save regions
+        # Save regions (always save as m/z values, not visual positions)
         regions_data = []
         for i, region in enumerate(self.regions):
-            region_values = region.getRegion()
-            # Type ignore needed due to pyqtgraph's dynamic return type
-            start = float(region_values[0])  # type: ignore[arg-type]
-            end = float(region_values[1])  # type: ignore[arg-type]
+            # Use stored m/z bounds instead of visual position
+            if region in self.region_mz_bounds:
+                start, end = self.region_mz_bounds[region]
+            else:
+                # Fallback: convert visual position to m/z
+                region_values = region.getRegion()
+                start_x = float(region_values[0])  # type: ignore[arg-type]
+                end_x = float(region_values[1])  # type: ignore[arg-type]
+                start, end = self._xaxis_to_mz(start_x, end_x)
+            
             name = f"Region {i+1}"
             if i < self.region_table.rowCount():
                 item = self.region_table.item(i, 0)
