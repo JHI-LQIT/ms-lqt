@@ -16,6 +16,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtCore import Qt as QtCore
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -28,6 +29,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -537,21 +539,23 @@ class PlotDataWorker(QThread):
     """Worker thread for preparing plot data (scaling) to avoid blocking the GUI."""
 
     # Signal emitted when preparation is complete
-    # Emits: (mz, scaled_channels_dict, timestamp)
+    # Emits: (x_data, scaled_channels_dict, timestamp)
     data_ready = pyqtSignal(object, dict, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.waveform = None
         self.scaling_functions = None
+        self.x_axis_mode = "mz"
         self._should_stop = False
 
     def setup_preparation(
-        self, waveform: WaveformData, scaling_functions: Dict[str, Callable]
+        self, waveform: WaveformData, scaling_functions: Dict[str, Callable], x_axis_mode: str = "mz"
     ):
         """Set up the data for the next preparation."""
         self.waveform = waveform
         self.scaling_functions = scaling_functions
+        self.x_axis_mode = x_axis_mode
         self._should_stop = False
 
     def stop(self):
@@ -579,9 +583,17 @@ class PlotDataWorker(QThread):
             if self._should_stop:
                 return
 
+            # Get x-axis data based on mode
+            if self.x_axis_mode == "frequency":
+                x_data = self.waveform.f_AC_kHz
+            elif self.x_axis_mode == "rf_amplitude":
+                x_data = self.waveform.rf_amp_V0p
+            else:  # default to mz
+                x_data = self.waveform.mz
+
             # Emit result
             self.data_ready.emit(
-                self.waveform.mz, scaled_channels, self.waveform.timestamp
+                x_data, scaled_channels, self.waveform.timestamp
             )
 
         except Exception as e:
@@ -611,6 +623,8 @@ class MainWindow(QMainWindow):
         self.current_waveform: Optional[WaveformData] = None
         self.plot_curves: Dict[str, pg.PlotDataItem] = {}
         self.regions: List[pg.LinearRegionItem] = []
+        # Store m/z bounds for each region (key: region object, value: (start_mz, end_mz))
+        self.region_mz_bounds: Dict[pg.LinearRegionItem, tuple] = {}
 
         # Channel scaling parameters: {channel_name: {"gain": float, "offset": float}}
         self.channel_scaling: Dict[str, Dict[str, float]] = {}
@@ -755,12 +769,17 @@ class MainWindow(QMainWindow):
         # Bottom: All controls in one compact row
         controls_layout = QHBoxLayout()
 
-        # MQTT config button (opens dialog)
+        # MQTT config button (opens dialog) and X-axis selection
         mqtt_button_widget = QWidget()
         mqtt_button_layout = QVBoxLayout(mqtt_button_widget)
         mqtt_config_btn = QPushButton("MQTT Configuration...")
         mqtt_config_btn.clicked.connect(self._open_mqtt_config_dialog)
         mqtt_button_layout.addWidget(mqtt_config_btn)
+        
+        # X-axis selection radio buttons
+        self._setup_xaxis_controls()
+        mqtt_button_layout.addWidget(self.xaxis_group)
+        
         mqtt_button_layout.addStretch()
         controls_layout.addWidget(mqtt_button_widget, stretch=1)
 
@@ -809,7 +828,16 @@ class MainWindow(QMainWindow):
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
         self.plot_widget.setLabel("left", "Amplitude", units="mV")
-        self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        
+        # Set x-axis label based on saved state
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
+        elif x_axis_mode == "rf_amplitude":
+            self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        else:
+            self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
         self.plot_widget.setTitle("No data received yet")
@@ -905,7 +933,7 @@ class MainWindow(QMainWindow):
         # Table
         self.region_table = QTableWidget()
         self.region_table.setColumnCount(3)
-        self.region_table.setHorizontalHeaderLabels(["Name", "Start (s)", "End (s)"])
+        self.region_table.setHorizontalHeaderLabels(["Name", "Start m/z", "End m/z"])
         header = self.region_table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(QHeaderView.Stretch)
@@ -940,6 +968,68 @@ class MainWindow(QMainWindow):
         dialog = MqttConfigDialog(self)
         dialog.exec_()
 
+    def _setup_xaxis_controls(self):
+        """Set up x-axis selection controls."""
+        self.xaxis_group = QGroupBox("X-Axis")
+        layout = QVBoxLayout()
+        
+        # Create radio buttons
+        self.xaxis_mz_radio = QRadioButton("m/z (Da)")
+        self.xaxis_freq_radio = QRadioButton("f_AC (kHz)")
+        self.xaxis_rf_radio = QRadioButton("RF Amp (V0p)")
+        
+        # Create button group
+        self.xaxis_button_group = QButtonGroup()
+        self.xaxis_button_group.addButton(self.xaxis_mz_radio, 0)
+        self.xaxis_button_group.addButton(self.xaxis_freq_radio, 1)
+        self.xaxis_button_group.addButton(self.xaxis_rf_radio, 2)
+        
+        # Set default from state
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            self.xaxis_freq_radio.setChecked(True)
+        elif x_axis_mode == "rf_amplitude":
+            self.xaxis_rf_radio.setChecked(True)
+        else:
+            self.xaxis_mz_radio.setChecked(True)
+        
+        # Connect signal
+        self.xaxis_button_group.buttonClicked.connect(self._on_xaxis_changed)
+        
+        # Add to layout
+        layout.addWidget(self.xaxis_mz_radio)
+        layout.addWidget(self.xaxis_freq_radio)
+        layout.addWidget(self.xaxis_rf_radio)
+        layout.addStretch()
+        
+        self.xaxis_group.setLayout(layout)
+    
+    def _on_xaxis_changed(self, button):
+        """Handle x-axis mode change."""
+        if button == self.xaxis_mz_radio:
+            x_axis_mode = "mz"
+            self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        elif button == self.xaxis_freq_radio:
+            x_axis_mode = "frequency"
+            self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
+        else:  # rf_amplitude
+            x_axis_mode = "rf_amplitude"
+            self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        
+        # Save to state
+        if "gui" not in self.state:
+            self.state["gui"] = {}
+        self.state["gui"]["x_axis_mode"] = x_axis_mode
+        state_manager.save_state(self.state_path, self.state)
+        
+        # Update region positions to match new x-axis
+        if self.current_waveform:
+            self._update_region_positions()
+        
+        # Update plot if we have data
+        if self.current_waveform:
+            self._update_plot(self.current_waveform)
+    
     def _setup_action_buttons(self):
         """Set up action buttons panel."""
         self.action_group = QGroupBox("Actions")
@@ -1194,6 +1284,82 @@ class MainWindow(QMainWindow):
             keepalive=mqtt_config.get("keepalive", 60),
         )
 
+    def _mz_to_xaxis(self, start_mz: float, end_mz: float) -> tuple:
+        """Convert m/z bounds to current x-axis units."""
+        if not self.current_waveform:
+            # No waveform data, return m/z as-is
+            return start_mz, end_mz
+        
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        
+        if x_axis_mode == "mz":
+            return start_mz, end_mz
+        
+        # Use interpolation to convert m/z to x-axis values
+        # This handles inverse relationships correctly (e.g., f_AC decreases as m/z increases)
+        mz = self.current_waveform.mz
+        
+        if x_axis_mode == "frequency":
+            x_data = self.current_waveform.f_AC_kHz
+        else:  # rf_amplitude
+            x_data = self.current_waveform.rf_amp_V0p
+        
+        # Interpolate to find x-axis values corresponding to m/z bounds
+        start_x = float(np.interp(start_mz, mz, x_data))
+        end_x = float(np.interp(end_mz, mz, x_data))
+        
+        return start_x, end_x
+    
+    def _xaxis_to_mz(self, start_x: float, end_x: float) -> tuple:
+        """Convert current x-axis bounds to m/z values."""
+        if not self.current_waveform:
+            # No waveform data, assume it's already m/z
+            return start_x, end_x
+        
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        
+        if x_axis_mode == "mz":
+            return start_x, end_x
+        
+        # Get appropriate x-axis array
+        if x_axis_mode == "frequency":
+            x_data = self.current_waveform.f_AC_kHz
+        else:  # rf_amplitude
+            x_data = self.current_waveform.rf_amp_V0p
+        
+        mz = self.current_waveform.mz
+        
+        # Check if x_data is monotonically increasing or decreasing
+        # For interp to work, x-values must be monotonically increasing
+        if len(x_data) > 1 and x_data[0] > x_data[-1]:
+            # x_data is decreasing (e.g., f_AC decreases as m/z increases)
+            # Reverse both arrays for interpolation
+            x_data_sorted = x_data[::-1]
+            mz_sorted = mz[::-1]
+            start_mz = float(np.interp(start_x, x_data_sorted, mz_sorted))
+            end_mz = float(np.interp(end_x, x_data_sorted, mz_sorted))
+        else:
+            # x_data is increasing (normal case)
+            start_mz = float(np.interp(start_x, x_data, mz))
+            end_mz = float(np.interp(end_x, x_data, mz))
+        
+        # Ensure m/z values are in correct order (start < end)
+        if start_mz > end_mz:
+            start_mz, end_mz = end_mz, start_mz
+        
+        return start_mz, end_mz
+    
+    def _update_region_positions(self):
+        """Update all region positions when x-axis mode changes."""
+        for region in self.regions:
+            if region in self.region_mz_bounds:
+                start_mz, end_mz = self.region_mz_bounds[region]
+                start_x, end_x = self._mz_to_xaxis(start_mz, end_mz)
+                # Block signals to prevent triggering _update_region_table during programmatic update
+                region.blockSignals(True)
+                region.setRegion([start_x, end_x])
+                region.blockSignals(False)
+    
     def _restore_regions(self):
         """Restore regions from saved state."""
         regions_data = self.state["gui"].get("regions", [])
@@ -1213,11 +1379,16 @@ class MainWindow(QMainWindow):
             end_mz: End m/z
             name: Region name
         """
+        # Store m/z bounds
+        # Convert m/z to current x-axis units for display
+        start_x, end_x = self._mz_to_xaxis(start_mz, end_mz)
+        
         region = pg.LinearRegionItem(
-            values=[start_mz, end_mz], brush=(100, 100, 255, 50)
+            values=[start_x, end_x], brush=(100, 100, 255, 50)
         )
         self.plot_widget.addItem(region)
         self.regions.append(region)
+        self.region_mz_bounds[region] = (start_mz, end_mz)
 
         # Add to table (block signals to avoid triggering cellChanged)
         row = self.region_table.rowCount()
@@ -1233,11 +1404,20 @@ class MainWindow(QMainWindow):
 
     def _update_region_table(self, region: pg.LinearRegionItem, row: int):
         """Update table when region is moved."""
-        start, end = region.getRegion()
+        region_values = region.getRegion()
+        start_x = float(region_values[0])  # type: ignore[arg-type]
+        end_x = float(region_values[1])  # type: ignore[arg-type]
+        
+        # Convert x-axis position back to m/z
+        start_mz, end_mz = self._xaxis_to_mz(start_x, end_x)
+        
+        # Update stored m/z bounds
+        self.region_mz_bounds[region] = (start_mz, end_mz)
+        
         # Block signals to avoid triggering cellChanged
         self.region_table.blockSignals(True)
-        self.region_table.setItem(row, 1, QTableWidgetItem(f"{start:.6f}"))
-        self.region_table.setItem(row, 2, QTableWidgetItem(f"{end:.6f}"))
+        self.region_table.setItem(row, 1, QTableWidgetItem(f"{start_mz:.6f}"))
+        self.region_table.setItem(row, 2, QTableWidgetItem(f"{end_mz:.6f}"))
         self.region_table.blockSignals(False)
 
         # Recalculate statistics when region is moved (throttled)
@@ -1274,8 +1454,14 @@ class MainWindow(QMainWindow):
                 if start >= end:
                     raise ValueError("Start m/z must be less than end m/z")
 
+                # Store m/z bounds
+                self.region_mz_bounds[region] = (start, end)
+                
+                # Convert m/z to current x-axis units for visual update
+                start_x, end_x = self._mz_to_xaxis(start, end)
+                
                 # Update the region (will trigger _update_region_table, but signals are blocked)
-                region.setRegion([start, end])
+                region.setRegion([start_x, end_x])
 
             except ValueError as e:
                 # Restore previous values if parsing fails
@@ -1476,6 +1662,10 @@ class MainWindow(QMainWindow):
                 region = self.regions[row_index]
                 self.plot_widget.removeItem(region)
 
+                # Remove from m/z bounds dictionary
+                if region in self.region_mz_bounds:
+                    del self.region_mz_bounds[region]
+                
                 # Remove from list and table
                 del self.regions[row_index]
                 self.region_table.removeRow(row_index)
@@ -1613,12 +1803,18 @@ class MainWindow(QMainWindow):
             self._statistics_calculation_pending = True
             return
 
-        # Build ROI definitions from current regions
+        # Build ROI definitions from current regions using stored m/z bounds
         rois = []
         for i, region in enumerate(self.regions):
-            region_values = region.getRegion()
-            start = float(region_values[0])  # type: ignore[arg-type]
-            end = float(region_values[1])  # type: ignore[arg-type]
+            # Use stored m/z bounds instead of visual position
+            if region in self.region_mz_bounds:
+                start, end = self.region_mz_bounds[region]
+            else:
+                # Fallback to visual position (convert to m/z if needed)
+                region_values = region.getRegion()
+                start_x = float(region_values[0])  # type: ignore[arg-type]
+                end_x = float(region_values[1])  # type: ignore[arg-type]
+                start, end = self._xaxis_to_mz(start_x, end_x)
 
             # Get name from table
             name = f"Region {i+1}"
@@ -1707,7 +1903,8 @@ class MainWindow(QMainWindow):
                 else:
                     scaling_functions[ch_name] = lambda data: data.copy()
 
-            self._plot_data_worker.setup_preparation(waveform, scaling_functions)
+            x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+            self._plot_data_worker.setup_preparation(waveform, scaling_functions, x_axis_mode)
             self._plot_data_worker.start()
 
     def _on_export_complete(self, success: bool, message: str):
@@ -2112,8 +2309,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
+        first_waveform = self.current_waveform is None
         self.current_waveform = waveform
         self._waveform_counter += 1
+
+        # Update region positions on first waveform if we have restored regions
+        if first_waveform and len(self.regions) > 0:
+            self._update_region_positions()
 
         # Update scaling controls for new channels (only if changed)
         if (
@@ -2142,7 +2344,8 @@ class MainWindow(QMainWindow):
                     else:
                         scaling_functions[ch_name] = lambda data: data.copy()
 
-                self._plot_data_worker.setup_preparation(waveform, scaling_functions)
+                x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+                self._plot_data_worker.setup_preparation(waveform, scaling_functions, x_axis_mode)
                 self._plot_data_worker.start()
             else:
                 # Worker is busy, mark as pending
@@ -2226,7 +2429,14 @@ class MainWindow(QMainWindow):
         Args:
             waveform: WaveformData to plot
         """
-        mz = waveform.mz
+        # Get x-axis data based on current mode
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            x_data = waveform.f_AC_kHz
+        elif x_axis_mode == "rf_amplitude":
+            x_data = waveform.rf_amp_V0p
+        else:
+            x_data = waveform.mz
 
         # Get sorted channel names for consistent ordering
         channel_names = sorted(waveform.channels.keys())
@@ -2248,11 +2458,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(mz, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(x_data, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve
@@ -2264,7 +2474,7 @@ class MainWindow(QMainWindow):
 
     def _update_plot_with_scaled_data(
         self,
-        mz: np.ndarray,
+        x_data: np.ndarray,
         scaled_channels: Dict[str, np.ndarray],
         timestamp: datetime,
     ):
@@ -2272,7 +2482,7 @@ class MainWindow(QMainWindow):
         Update the plot with pre-scaled channel data (from worker thread).
 
         Args:
-            mz: m/z array
+            x_data: X-axis data array (m/z, f_AC, or rf_amp depending on mode)
             scaled_channels: Dictionary of channel_name -> scaled_data
             timestamp: Waveform timestamp
         """
@@ -2292,11 +2502,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(mz, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(x_data, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve
@@ -2320,13 +2530,19 @@ class MainWindow(QMainWindow):
         # Save splitter position
         self.state["gui"]["splitter_sizes"] = self.plots_splitter.sizes()
 
-        # Save regions
+        # Save regions (always save as m/z values, not visual positions)
         regions_data = []
         for i, region in enumerate(self.regions):
-            region_values = region.getRegion()
-            # Type ignore needed due to pyqtgraph's dynamic return type
-            start = float(region_values[0])  # type: ignore[arg-type]
-            end = float(region_values[1])  # type: ignore[arg-type]
+            # Use stored m/z bounds instead of visual position
+            if region in self.region_mz_bounds:
+                start, end = self.region_mz_bounds[region]
+            else:
+                # Fallback: convert visual position to m/z
+                region_values = region.getRegion()
+                start_x = float(region_values[0])  # type: ignore[arg-type]
+                end_x = float(region_values[1])  # type: ignore[arg-type]
+                start, end = self._xaxis_to_mz(start_x, end_x)
+            
             name = f"Region {i+1}"
             if i < self.region_table.rowCount():
                 item = self.region_table.item(i, 0)

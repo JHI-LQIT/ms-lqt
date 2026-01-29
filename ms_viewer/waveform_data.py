@@ -126,3 +126,18 @@ class WaveformData:
         multiplier = 34.45 / (trapping_params.r0_cm**2 * trapping_params.f_RF_MHz)
 
         return multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
+    
+    def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
+        """Calculate m/z from RF amplitude and frequency."""
+        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
+        return multiplier * rf_amp_V0p / f_AC_kHz
+    
+    def freq_from_mz_and_rf(self, mz: float, rf_amp_V0p: float) -> float:
+        """Calculate frequency from m/z and RF amplitude."""
+        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
+        return multiplier * rf_amp_V0p / mz
+    
+    def rf_from_mz_and_freq(self, mz: float, f_AC_kHz: float) -> float:
+        """Calculate RF amplitude from m/z and frequency."""
+        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
+        return mz * f_AC_kHz / multiplier
