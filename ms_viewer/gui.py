@@ -1343,6 +1343,10 @@ class MainWindow(QMainWindow):
             start_mz = float(np.interp(start_x, x_data, mz))
             end_mz = float(np.interp(end_x, x_data, mz))
         
+        # Ensure m/z values are in correct order (start < end)
+        if start_mz > end_mz:
+            start_mz, end_mz = end_mz, start_mz
+        
         return start_mz, end_mz
     
     def _update_region_positions(self):
