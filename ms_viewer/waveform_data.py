@@ -63,6 +63,8 @@ class WaveformData:
         # Cut channels to match m/z length and sort by m/z
         sorted_indices = np.argsort(self.mz)
         self.mz = self.mz[sorted_indices]
+        self.f_AC_kHz = self.f_AC_kHz[sorted_indices]
+        self.rf_amp_V0p = self.rf_amp_V0p[sorted_indices]
         for key in self.channels:
             self.channels[key] = self.channels[key][
                 start_index : start_index + n_samples
