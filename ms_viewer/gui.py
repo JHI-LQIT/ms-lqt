@@ -933,7 +933,7 @@ class MainWindow(QMainWindow):
         # Table
         self.region_table = QTableWidget()
         self.region_table.setColumnCount(3)
-        self.region_table.setHorizontalHeaderLabels(["Name", "Start (s)", "End (s)"])
+        self.region_table.setHorizontalHeaderLabels(["Name", "Start m/z", "End m/z"])
         header = self.region_table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(QHeaderView.Stretch)
