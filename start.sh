@@ -4,7 +4,7 @@
 cd /home/jasik/ms-lqt/
 
 echo "======================================"
-echo "MQTT Oscilloscope Waveform Viewer"
+echo "MS LQIT"
 echo "======================================"
 echo
 
