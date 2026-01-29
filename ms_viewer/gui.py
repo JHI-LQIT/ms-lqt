@@ -16,6 +16,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtCore import Qt as QtCore
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -28,6 +29,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -537,21 +539,23 @@ class PlotDataWorker(QThread):
     """Worker thread for preparing plot data (scaling) to avoid blocking the GUI."""
 
     # Signal emitted when preparation is complete
-    # Emits: (mz, scaled_channels_dict, timestamp)
+    # Emits: (x_data, scaled_channels_dict, timestamp)
     data_ready = pyqtSignal(object, dict, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.waveform = None
         self.scaling_functions = None
+        self.x_axis_mode = "mz"
         self._should_stop = False
 
     def setup_preparation(
-        self, waveform: WaveformData, scaling_functions: Dict[str, Callable]
+        self, waveform: WaveformData, scaling_functions: Dict[str, Callable], x_axis_mode: str = "mz"
     ):
         """Set up the data for the next preparation."""
         self.waveform = waveform
         self.scaling_functions = scaling_functions
+        self.x_axis_mode = x_axis_mode
         self._should_stop = False
 
     def stop(self):
@@ -579,9 +583,17 @@ class PlotDataWorker(QThread):
             if self._should_stop:
                 return
 
+            # Get x-axis data based on mode
+            if self.x_axis_mode == "frequency":
+                x_data = self.waveform.f_AC_kHz
+            elif self.x_axis_mode == "rf_amplitude":
+                x_data = self.waveform.rf_amp_V0p
+            else:  # default to mz
+                x_data = self.waveform.mz
+
             # Emit result
             self.data_ready.emit(
-                self.waveform.mz, scaled_channels, self.waveform.timestamp
+                x_data, scaled_channels, self.waveform.timestamp
             )
 
         except Exception as e:
@@ -755,12 +767,17 @@ class MainWindow(QMainWindow):
         # Bottom: All controls in one compact row
         controls_layout = QHBoxLayout()
 
-        # MQTT config button (opens dialog)
+        # MQTT config button (opens dialog) and X-axis selection
         mqtt_button_widget = QWidget()
         mqtt_button_layout = QVBoxLayout(mqtt_button_widget)
         mqtt_config_btn = QPushButton("MQTT Configuration...")
         mqtt_config_btn.clicked.connect(self._open_mqtt_config_dialog)
         mqtt_button_layout.addWidget(mqtt_config_btn)
+        
+        # X-axis selection radio buttons
+        self._setup_xaxis_controls()
+        mqtt_button_layout.addWidget(self.xaxis_group)
+        
         mqtt_button_layout.addStretch()
         controls_layout.addWidget(mqtt_button_widget, stretch=1)
 
@@ -809,7 +826,16 @@ class MainWindow(QMainWindow):
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
         self.plot_widget.setLabel("left", "Amplitude", units="mV")
-        self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        
+        # Set x-axis label based on saved state
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
+        elif x_axis_mode == "rf_amplitude":
+            self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        else:
+            self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
         self.plot_widget.setTitle("No data received yet")
@@ -940,6 +966,64 @@ class MainWindow(QMainWindow):
         dialog = MqttConfigDialog(self)
         dialog.exec_()
 
+    def _setup_xaxis_controls(self):
+        """Set up x-axis selection controls."""
+        self.xaxis_group = QGroupBox("X-Axis")
+        layout = QVBoxLayout()
+        
+        # Create radio buttons
+        self.xaxis_mz_radio = QRadioButton("m/z (Da)")
+        self.xaxis_freq_radio = QRadioButton("f_AC (kHz)")
+        self.xaxis_rf_radio = QRadioButton("RF Amp (V0p)")
+        
+        # Create button group
+        self.xaxis_button_group = QButtonGroup()
+        self.xaxis_button_group.addButton(self.xaxis_mz_radio, 0)
+        self.xaxis_button_group.addButton(self.xaxis_freq_radio, 1)
+        self.xaxis_button_group.addButton(self.xaxis_rf_radio, 2)
+        
+        # Set default from state
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            self.xaxis_freq_radio.setChecked(True)
+        elif x_axis_mode == "rf_amplitude":
+            self.xaxis_rf_radio.setChecked(True)
+        else:
+            self.xaxis_mz_radio.setChecked(True)
+        
+        # Connect signal
+        self.xaxis_button_group.buttonClicked.connect(self._on_xaxis_changed)
+        
+        # Add to layout
+        layout.addWidget(self.xaxis_mz_radio)
+        layout.addWidget(self.xaxis_freq_radio)
+        layout.addWidget(self.xaxis_rf_radio)
+        layout.addStretch()
+        
+        self.xaxis_group.setLayout(layout)
+    
+    def _on_xaxis_changed(self, button):
+        """Handle x-axis mode change."""
+        if button == self.xaxis_mz_radio:
+            x_axis_mode = "mz"
+            self.plot_widget.setLabel("bottom", "m/z", units="Da")
+        elif button == self.xaxis_freq_radio:
+            x_axis_mode = "frequency"
+            self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
+        else:  # rf_amplitude
+            x_axis_mode = "rf_amplitude"
+            self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        
+        # Save to state
+        if "gui" not in self.state:
+            self.state["gui"] = {}
+        self.state["gui"]["x_axis_mode"] = x_axis_mode
+        state_manager.save_state(self.state_path, self.state)
+        
+        # Update plot if we have data
+        if self.current_waveform:
+            self._update_plot(self.current_waveform)
+    
     def _setup_action_buttons(self):
         """Set up action buttons panel."""
         self.action_group = QGroupBox("Actions")
@@ -1707,7 +1791,8 @@ class MainWindow(QMainWindow):
                 else:
                     scaling_functions[ch_name] = lambda data: data.copy()
 
-            self._plot_data_worker.setup_preparation(waveform, scaling_functions)
+            x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+            self._plot_data_worker.setup_preparation(waveform, scaling_functions, x_axis_mode)
             self._plot_data_worker.start()
 
     def _on_export_complete(self, success: bool, message: str):
@@ -2142,7 +2227,8 @@ class MainWindow(QMainWindow):
                     else:
                         scaling_functions[ch_name] = lambda data: data.copy()
 
-                self._plot_data_worker.setup_preparation(waveform, scaling_functions)
+                x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+                self._plot_data_worker.setup_preparation(waveform, scaling_functions, x_axis_mode)
                 self._plot_data_worker.start()
             else:
                 # Worker is busy, mark as pending
@@ -2226,7 +2312,14 @@ class MainWindow(QMainWindow):
         Args:
             waveform: WaveformData to plot
         """
-        mz = waveform.mz
+        # Get x-axis data based on current mode
+        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
+        if x_axis_mode == "frequency":
+            x_data = waveform.f_AC_kHz
+        elif x_axis_mode == "rf_amplitude":
+            x_data = waveform.rf_amp_V0p
+        else:
+            x_data = waveform.mz
 
         # Get sorted channel names for consistent ordering
         channel_names = sorted(waveform.channels.keys())
@@ -2248,11 +2341,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(mz, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(x_data, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve
@@ -2264,7 +2357,7 @@ class MainWindow(QMainWindow):
 
     def _update_plot_with_scaled_data(
         self,
-        mz: np.ndarray,
+        x_data: np.ndarray,
         scaled_channels: Dict[str, np.ndarray],
         timestamp: datetime,
     ):
@@ -2272,7 +2365,7 @@ class MainWindow(QMainWindow):
         Update the plot with pre-scaled channel data (from worker thread).
 
         Args:
-            mz: m/z array
+            x_data: X-axis data array (m/z, f_AC, or rf_amp depending on mode)
             scaled_channels: Dictionary of channel_name -> scaled_data
             timestamp: Waveform timestamp
         """
@@ -2292,11 +2385,11 @@ class MainWindow(QMainWindow):
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(mz, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, scaled_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(mz, scaled_data, pen=pen, name=ch_name)
+                curve = self.plot_widget.plot(x_data, scaled_data, pen=pen, name=ch_name)
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve

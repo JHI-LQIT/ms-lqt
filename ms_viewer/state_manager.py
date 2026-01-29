@@ -49,6 +49,7 @@ def load_state(path: str) -> Dict[str, Any]:
             "selected_metrics": [
                 "mean"
             ],  # List of metric names to display in statistics plot
+            "x_axis_mode": "mz",  # X-axis mode: "mz", "frequency", or "rf_amplitude"
         },
         "preferences": {
             "last_export_dir": str(Path.home()),
