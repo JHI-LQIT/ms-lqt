@@ -58,7 +58,7 @@ class WaveformData:
         self.trapping_parameters = trapping_parameters
         # Compute time axis
         N = lengths[0]
-        self.mz, start_index, n_samples = self.calc_mz_values(trapping_parameters, dt, N)
+        self.mz, self.f_AC_kHz, self.rf_amp_V0p, start_index, n_samples = self.calc_mz_values(trapping_parameters, dt, N)
 
         # Cut channels to match m/z length and sort by m/z
         sorted_indices = np.argsort(self.mz)
@@ -80,7 +80,7 @@ class WaveformData:
 
     def calc_mz_values(
         self, trapping_params: TrappingParameters, dt: float, N: int
-    ) -> tuple[np.ndarray, int, int]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
         """
         Calculate m/z values from trapping parameters and time data.
 
@@ -91,6 +91,8 @@ class WaveformData:
 
         Returns:
             np.ndarray: The calculated m/z values.
+            np.ndarray: The frequency array used in the calculation.
+            np.ndarray: The RF amplitude array used in the calculation.
             int: The start index used in the calculation.
             int: The number of samples used in the calculation.
         """
@@ -121,4 +123,4 @@ class WaveformData:
 
         multiplier = 34.45 / (trapping_params.r0_cm**2 * trapping_params.f_RF_MHz)
 
-        return multiplier * rf_amp / f_AC, start_idx, n_samples
+        return multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
