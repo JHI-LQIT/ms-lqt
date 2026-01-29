@@ -738,7 +738,7 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Set up the user interface."""
-        self.setWindowTitle("MQTT Oscilloscope Waveform Viewer")
+        self.setWindowTitle("MS LQIT")
         self.setMinimumSize(1200, 700)
 
         # Central widget

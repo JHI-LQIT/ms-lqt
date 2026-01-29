@@ -1,5 +1,5 @@
 """
-Main entry point for the MQTT Oscilloscope Waveform Viewer application.
+Main entry point for the MS LQIT application.
 
 This script initializes the application, sets up logging, creates the MQTT client
 and GUI, and starts the Qt event loop.
@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 def main():
     """Main application entry point."""
     # Set up logging
-    log_file = Path.home() / ".waveform_viewer.log"
+    log_file = Path.home() / ".ms_lqit.log"
     setup_logging(log_level=logging.INFO, log_file=str(log_file))
 
-    logger.info("Starting MQTT Oscilloscope Waveform Viewer")
+    logger.info("Starting MS LQIT")
 
     # Create Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("MQTT Oscilloscope Waveform Viewer")
+    app.setApplicationName("MS LQIT")
 
     # Get state file path
     state_path = get_default_state_path()
