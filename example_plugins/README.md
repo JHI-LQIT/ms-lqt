@@ -7,11 +7,11 @@ This directory contains example custom statistic plugins for the MQTT Oscillosco
 Copy the plugin files you want to use to your plugin directory:
 
 ```bash
-mkdir -p ~/.waveform_viewer/plugins
-cp example_plugins/*.py ~/.waveform_viewer/plugins/
+mkdir -p ~/.ms_viewer/plugins
+cp example_plugins/*.py ~/.ms_viewer/plugins/
 ```
 
-Then enable them in your configuration file (`~/.waveform_viewer_config.yaml`):
+Then enable them in your configuration file (`~/.ms_viewer_config.yaml`):
 
 ```yaml
 statistics:
@@ -62,7 +62,7 @@ See the Plugin Development Guide in the main documentation for details.
 ### Quick Example
 
 ```python
-from waveform_viewer.roi_statistics import CustomStatisticPlugin
+from ms_viewer.roi_statistics import CustomStatisticPlugin
 import numpy as np
 
 class MyPlugin(CustomStatisticPlugin):

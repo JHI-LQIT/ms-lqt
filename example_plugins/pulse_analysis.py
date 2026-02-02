@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 import numpy as np
 
 if TYPE_CHECKING:
-    from waveform_viewer.roi_statistics import CustomStatisticPlugin
+    from ms_viewer.roi_statistics import CustomStatisticPlugin
 else:
     try:
-        from waveform_viewer.roi_statistics import CustomStatisticPlugin
+        from ms_viewer.roi_statistics import CustomStatisticPlugin
     except ImportError:
         from abc import ABC, abstractmethod
 
