@@ -12,9 +12,21 @@ import paho.mqtt.client as mqtt
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .data_model import PayloadParseError, parse_payload, parse_trapping_parameters
-from .trapping_parameters import TrappingParameters
+from .trapping_parameters import TrapControls
 
 logger = logging.getLogger(__name__)
+
+
+def create_unique_id() -> str:
+    """
+    Create a unique client ID using the current timestamp.
+
+    Returns:
+        A unique string to use as MQTT client ID.
+    """
+    import time
+
+    return f"{int(time.time() * 1000)}"
 
 
 class MqttClient(QObject):
@@ -50,7 +62,7 @@ class MqttClient(QObject):
         self.input_topic = "lqt/picoscope/waveform"
         self.trapping_parameters_topic = "lqt/trapping/parameters"
         self.output_topic = "lqt/lqt_ms/republish"
-        self.client_id = "ms_viewer"
+        self.client_id = f"ms_viewer_{create_unique_id()}"
         self.keepalive = 60
 
         # MQTT client
@@ -58,7 +70,7 @@ class MqttClient(QObject):
         self._connected = False
         self._subscribed = False
 
-        self.trapping_parameters: Optional[TrappingParameters] = None
+        self.trapping_parameters: Optional[TrapControls] = None
 
     def set_config(
         self,
@@ -281,7 +293,12 @@ class MqttClient(QObject):
                 # Parse the payload
                 if not self.trapping_parameters:
                     return
-                if not self.trapping_parameters.secular_excitation_enabled:
+                # Check if any excitation step is active
+                has_active_step = any(
+                    step.step_active
+                    for step in self.trapping_parameters.excitation_steps
+                )
+                if not has_active_step:
                     return
                 waveform = parse_payload(message.payload, self.trapping_parameters)
 
