@@ -44,6 +44,7 @@ class MqttClient(QObject):
 
     # Qt signals
     waveform_received = pyqtSignal(object)  # WaveformData
+    trapping_parameters_received = pyqtSignal(object)  # TrapControls
     connection_state_changed = pyqtSignal(bool, str)  # connected, message
     error_occurred = pyqtSignal(str)  # error message
 
@@ -320,9 +321,11 @@ class MqttClient(QObject):
             logger.debug("Received message on trapping parameters topic")
             try:
                 self.trapping_parameters = parse_trapping_parameters(message.payload)
-                logger.debug(
+                logger.info(
                     f"Received trapping parameters: {self.trapping_parameters}"
                 )
+                # Emit signal to notify GUI
+                self.trapping_parameters_received.emit(self.trapping_parameters)
             except Exception as e:
                 error_msg = f"Failed to parse trapping parameters payload: {e}"
                 logger.error(error_msg)

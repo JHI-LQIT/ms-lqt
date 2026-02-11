@@ -626,6 +626,8 @@ class MainWindow(QMainWindow):
         self.regions: List[pg.LinearRegionItem] = []
         # Store m/z bounds for each region (key: region object, value: (start_mz, end_mz))
         self.region_mz_bounds: Dict[pg.LinearRegionItem, tuple] = {}
+        # Track if trapping parameters were received
+        self.trapping_params_received = False
 
         # Channel scaling parameters: {channel_name: {"gain": float, "offset": float}}
         self.channel_scaling: Dict[str, Dict[str, float]] = {}
@@ -646,6 +648,8 @@ class MainWindow(QMainWindow):
             "selected_excitation_step", 0
         )
         self.excitation_step_spinbox: Optional[QSpinBox] = None
+        # List of active step indices for the spinbox
+        self._active_step_indices: List[int] = []
 
         # Statistics tracking
         stats_config = self.state.get("statistics", {})
@@ -742,6 +746,9 @@ class MainWindow(QMainWindow):
 
         # Connect MQTT signals
         self.mqtt_client.waveform_received.connect(self.on_waveform_received)
+        self.mqtt_client.trapping_parameters_received.connect(
+            self.on_trapping_parameters_received
+        )
         self.mqtt_client.connection_state_changed.connect(
             self.on_connection_state_changed
         )
@@ -853,7 +860,7 @@ class MainWindow(QMainWindow):
 
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
-        self.plot_widget.setTitle("No data received yet")
+        self._update_plot_title()
 
     def _setup_statistics_plot(self):
         """Set up the statistics plot with PyQtGraph."""
@@ -1064,6 +1071,16 @@ class MainWindow(QMainWindow):
 
     def _on_excitation_step_changed(self, value: int):
         """Handle excitation step selection change."""
+        # Validate that the selected step is active
+        if self._active_step_indices and value not in self._active_step_indices:
+            logger.warning(f"Step {value} is not active, ignoring change")
+            # Reset to current valid step
+            if self.excitation_step_spinbox is not None:
+                self.excitation_step_spinbox.blockSignals(True)
+                self.excitation_step_spinbox.setValue(self.selected_excitation_step)
+                self.excitation_step_spinbox.blockSignals(False)
+            return
+        
         self.selected_excitation_step = value
 
         # Save to state
@@ -1092,6 +1109,9 @@ class MainWindow(QMainWindow):
                 self._update_plot(new_waveform)
             except Exception as e:
                 logger.error(f"Failed to update waveform with new excitation step: {e}")
+        else:
+            # Update title even without waveform
+            self._update_plot_title()
 
     def _setup_action_buttons(self):
         """Set up action buttons panel."""
@@ -1276,6 +1296,102 @@ class MainWindow(QMainWindow):
         offset = self.channel_scaling[channel_name]["offset"]
 
         return gain * (data - offset)
+
+    def _get_excitation_step_info(self) -> str:
+        """Get formatted excitation step information for plot title."""
+        # Try to get trapping parameters from waveform or MQTT client
+        trapping_params = None
+        if self.current_waveform is not None:
+            trapping_params = self.current_waveform.trapping_parameters
+        elif self.mqtt_client.trapping_parameters is not None:
+            trapping_params = self.mqtt_client.trapping_parameters
+
+        if trapping_params is None:
+            return ""
+        
+        # Check if there are any active steps
+        active_steps = [
+            i for i, step in enumerate(trapping_params.excitation_steps)
+            if step.step_active
+        ]
+        
+        if not active_steps:
+            return "⚠ No active excitation steps"
+
+        step_index = self.selected_excitation_step
+        excitation_steps = trapping_params.excitation_steps
+
+        if step_index < 0 or step_index >= len(excitation_steps):
+            return ""
+        
+        step = excitation_steps[step_index]
+        
+        # Check if current step is active
+        if not step.step_active:
+            return f"⚠ Step {step_index} is inactive"
+
+        # Build step info string with step number
+        if step.step_name:
+            step_label = f"Step {step_index} ({step.step_name})"
+        else:
+            step_label = f"Step {step_index}"
+
+        # Get trap parameters for m/z calculation
+        r0_cm = trapping_params.basic_controls.r0_cm
+        f_RF_MHz = trapping_params.basic_controls.f_RF_MHz
+        multiplier = 34.45 / (r0_cm**2 * f_RF_MHz)
+
+        # Determine the m/z range based on sweep settings
+        if step.enable_frequency_sweep or step.enable_rf_amplitude_sweep:
+            # Calculate m/z at begin and end of sweep
+            mz_begin = (
+                multiplier * step.rf_amplitude_begin_V0p / step.frequency_begin_kHz
+            )
+
+            if step.enable_frequency_sweep:
+                f_end = step.frequency_end_kHz
+            else:
+                f_end = step.frequency_begin_kHz
+
+            if step.enable_rf_amplitude_sweep:
+                rf_end = step.rf_amplitude_end_V0p
+            else:
+                rf_end = step.rf_amplitude_begin_V0p
+
+            mz_end = multiplier * rf_end / f_end
+
+            # Ensure proper order
+            mz_min = min(mz_begin, mz_end)
+            mz_max = max(mz_begin, mz_end)
+
+            return f"{step_label}: m/z {mz_min:.1f}-{mz_max:.1f} Da"
+        else:
+            # No sweep - single m/z point
+            mz_point = (
+                multiplier * step.rf_amplitude_begin_V0p / step.frequency_begin_kHz
+            )
+            return f"{step_label}: m/z {mz_point:.1f} Da"
+
+    def _update_plot_title(self, timestamp_str: Optional[str] = None):
+        """Update the plot title with excitation step info and optional timestamp.
+
+        Args:
+            timestamp_str: Optional timestamp string to display. If None, shows "No data received yet".
+        """
+        step_info = self._get_excitation_step_info()
+
+        if timestamp_str:
+            if step_info:
+                title = f"{step_info} | {timestamp_str}"
+            else:
+                title = timestamp_str
+        else:
+            if step_info:
+                title = f"{step_info} | No data received yet"
+            else:
+                title = "No data received yet"
+
+        self.plot_widget.setTitle(title)
 
     def _average_waveforms(self, waveforms: List[WaveformData]) -> WaveformData:
         """
@@ -2315,6 +2431,118 @@ class MainWindow(QMainWindow):
             )
             logger.error(f"Failed to reload plugins: {e}", exc_info=True)
 
+    def _update_status_bar_connection(self, message: str):
+        """Update status bar with connection info and trapping parameters status."""
+        parts = [message]
+        
+        if self.trapping_params_received:
+            parts.append("Trapping params: ✓")
+            # Add active step count
+            num_active = len(self._active_step_indices)
+            total_steps = len(self._active_step_indices) if self.mqtt_client.trapping_parameters else 0
+            if self.mqtt_client.trapping_parameters:
+                total_steps = len(self.mqtt_client.trapping_parameters.excitation_steps)
+                parts.append(f"Active steps: {num_active}/{total_steps}")
+        else:
+            parts.append("Trapping params: ✗")
+        
+        status_message = " | ".join(parts)
+        self.status_bar.showMessage(status_message)
+
+    def _get_active_step_indices(self) -> List[int]:
+        """Get list of indices for active excitation steps."""
+        trapping_params = None
+        if self.current_waveform is not None:
+            trapping_params = self.current_waveform.trapping_parameters
+        elif self.mqtt_client.trapping_parameters is not None:
+            trapping_params = self.mqtt_client.trapping_parameters
+        
+        if trapping_params is None:
+            return []
+        
+        return [
+            i for i, step in enumerate(trapping_params.excitation_steps)
+            if step.step_active
+        ]
+
+    def _find_next_active_step(self, current_index: int) -> Optional[int]:
+        """Find the next active step after the given index."""
+        if not self._active_step_indices:
+            return None
+        
+        # Find next active step after current
+        for idx in self._active_step_indices:
+            if idx > current_index:
+                return idx
+        
+        # No next step, return None
+        return None
+
+    def _find_previous_active_step(self, current_index: int) -> Optional[int]:
+        """Find the previous active step before the given index."""
+        if not self._active_step_indices:
+            return None
+        
+        # Find previous active step before current
+        for idx in reversed(self._active_step_indices):
+            if idx < current_index:
+                return idx
+        
+        # No previous step, return None
+        return None
+
+    def _update_excitation_step_spinbox(self, trapping_params):
+        """Update the excitation step spinbox with only active steps."""
+        if self.excitation_step_spinbox is None or trapping_params is None:
+            return
+        
+        # Get active step indices
+        self._active_step_indices = [
+            i for i, step in enumerate(trapping_params.excitation_steps)
+            if step.step_active
+        ]
+        
+        if not self._active_step_indices:
+            # No active steps
+            self.excitation_step_spinbox.setEnabled(False)
+            self.excitation_step_spinbox.setMinimum(0)
+            self.excitation_step_spinbox.setMaximum(0)
+            self.excitation_step_spinbox.setValue(0)
+            self._update_plot_title()
+            return
+        
+        self.excitation_step_spinbox.setEnabled(True)
+        
+        # Check if current step is still active
+        if self.selected_excitation_step not in self._active_step_indices:
+            # Try to find next active step
+            new_step = self._find_next_active_step(self.selected_excitation_step)
+            if new_step is None:
+                # Try previous active step
+                new_step = self._find_previous_active_step(self.selected_excitation_step)
+            if new_step is None:
+                # Fallback to first active step
+                new_step = self._active_step_indices[0]
+            
+            logger.info(f"Current step {self.selected_excitation_step} is inactive, switching to step {new_step}")
+            self.selected_excitation_step = new_step
+            # Save to state
+            self.state["preferences"]["selected_excitation_step"] = new_step
+            state_manager.save_state(self.state_path, self.state)
+        
+        # Update spinbox range to only show active steps
+        self.excitation_step_spinbox.blockSignals(True)
+        self.excitation_step_spinbox.setMinimum(min(self._active_step_indices))
+        self.excitation_step_spinbox.setMaximum(max(self._active_step_indices))
+        self.excitation_step_spinbox.setValue(self.selected_excitation_step)
+        self.excitation_step_spinbox.blockSignals(False)
+        
+        # Update tooltip with active steps info
+        active_steps_str = ", ".join(str(i) for i in self._active_step_indices)
+        self.excitation_step_spinbox.setToolTip(
+            f"Select active excitation step for m/z calculation.\nActive steps: {active_steps_str}"
+        )
+
     def _publish_statistics(self):
         """Publish current statistics to MQTT statistics topic."""
         import json
@@ -2370,6 +2598,23 @@ class MainWindow(QMainWindow):
     # Slots for MQTT signals
 
     @pyqtSlot(object)
+    def on_trapping_parameters_received(self, trapping_params):
+        """Handle received trapping parameters from MQTT."""
+        if not self.trapping_params_received:
+            self.trapping_params_received = True
+            logger.info("Trapping parameters received and status updated")
+
+        # Update excitation step spinbox with only active steps
+        self._update_excitation_step_spinbox(trapping_params)
+        
+        # Update status bar with active step count
+        if self.mqtt_client.is_connected():
+            self._update_status_bar_connection("Connected")
+
+        # Update plot title with step info
+        self._update_plot_title()
+
+    @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
         first_waveform = self.current_waveform is None
@@ -2388,15 +2633,8 @@ class MainWindow(QMainWindow):
             self._update_scaling_controls()
             self._last_channel_set = set(waveform.channels.keys())
 
-        # Update excitation step spinbox range based on available excitation steps
-        if self.excitation_step_spinbox is not None:
-            num_steps = len(waveform.trapping_parameters.excitation_steps)
-            if num_steps > 0:
-                self.excitation_step_spinbox.setMaximum(num_steps - 1)
-                # Ensure current value is within range
-                if self.selected_excitation_step >= num_steps:
-                    self.selected_excitation_step = 0
-                    self.excitation_step_spinbox.setValue(0)
+        # Update excitation step spinbox with only active steps
+        self._update_excitation_step_spinbox(waveform.trapping_parameters)
 
         # Update plot - use threaded scaling for large waveforms
         max_samples = max(len(data) for data in waveform.channels.values())
@@ -2465,11 +2703,13 @@ class MainWindow(QMainWindow):
     def on_connection_state_changed(self, connected: bool, message: str):
         """Handle connection state changes."""
         if connected:
-            self.status_bar.showMessage(f"Connected: {message}")
+            self._update_status_bar_connection(f"Connected: {message}")
             self.apply_mqtt_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
         else:
-            self.status_bar.showMessage(f"Disconnected: {message}")
+            # Reset trapping params flag on disconnect
+            self.trapping_params_received = False
+            self._update_status_bar_connection(f"Disconnected: {message}")
             self.apply_mqtt_btn.setEnabled(True)
             self.disconnect_btn.setEnabled(False)
 
@@ -2544,10 +2784,9 @@ class MainWindow(QMainWindow):
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve
 
-        # Update title with timestamp
-        self.plot_widget.setTitle(
-            f"Last timestamp: {waveform.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
-        )
+        # Update title with timestamp and excitation step info
+        timestamp_str = f"Last timestamp: {waveform.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
+        self._update_plot_title(timestamp_str)
 
     def _update_plot_with_scaled_data(
         self,
@@ -2590,10 +2829,11 @@ class MainWindow(QMainWindow):
                 curve.setClipToView(True)
                 self.plot_curves[ch_name] = curve
 
-        # Update title with timestamp
-        self.plot_widget.setTitle(
+        # Update title with timestamp and excitation step info
+        timestamp_str = (
             f"Last timestamp: {timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
         )
+        self._update_plot_title(timestamp_str)
 
     def closeEvent(self, event):  # type: ignore[override]
         """Handle window close event - save state."""
