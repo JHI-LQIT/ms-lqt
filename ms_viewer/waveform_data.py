@@ -65,7 +65,7 @@ class WaveformData:
         # Compute time axis
         N = lengths[0]
         self.mz, self.f_AC_kHz, self.rf_amp_V0p, start_index, n_samples = (
-            self.calc_mz_values(trapping_parameters, dt, N, selected_excitation_step)
+            self.calc_mz_values(dt, N, selected_excitation_step)
         )
 
         # Cut channels to match m/z length and sort by m/z
@@ -88,14 +88,25 @@ class WaveformData:
             f"selected_excitation_step={self.selected_excitation_step})"
         )
 
+    @property
+    def _multiplier(self) -> float:
+        """Calculate the m/z conversion multiplier from trap parameters.
+
+        The multiplier is used in the formula: m/z = multiplier * V_RF / f_secular
+        where multiplier = 34.45 / (r0^2 * f_RF)
+        """
+        return 34.45 / (
+            self.trapping_parameters.basic_controls.r0_cm**2
+            * self.trapping_parameters.basic_controls.f_RF_MHz
+        )
+
     def calc_mz_values(
-        self, trapping_params: TrapControls, dt: float, N: int, step_index: int = 0
+        self, dt: float, N: int, step_index: int = 0
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
         """
         Calculate m/z values from trapping parameters and time data.
 
         Args:
-            trapping_params (TrapControls): The trapping parameters.
             dt (float): The time interval between samples.
             N (int): The number of samples.
             step_index (int): Index of the excitation step to use (default: 0).
@@ -108,13 +119,15 @@ class WaveformData:
             int: The number of samples used in the calculation.
         """
         # Validate step index
-        if step_index < 0 or step_index >= len(trapping_params.excitation_steps):
+        if step_index < 0 or step_index >= len(
+            self.trapping_parameters.excitation_steps
+        ):
             step_index = 0
 
-        excitation_step = trapping_params.excitation_steps[step_index]
+        excitation_step = self.trapping_parameters.excitation_steps[step_index]
 
         # Calculate start and end time for this excitation step
-        start_time_ms = trapping_params.calculate_step_start_time(step_index)
+        start_time_ms = self.trapping_parameters.calculate_step_start_time(step_index)
         end_time_ms = start_time_ms + excitation_step.step_duration_ms
 
         start_idx = int(np.ceil(start_time_ms / (1000.0 * dt)))
@@ -139,34 +152,16 @@ class WaveformData:
             else np.full(n_samples, rf_begin)
         )
 
-        # Calculate multiplier
-        multiplier = 34.45 / (
-            trapping_params.basic_controls.r0_cm**2
-            * trapping_params.basic_controls.f_RF_MHz
-        )
-
-        return multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
+        return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
 
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
         """Calculate m/z from RF amplitude and frequency."""
-        multiplier = 34.45 / (
-            self.trapping_parameters.basic_controls.r0_cm**2
-            * self.trapping_parameters.basic_controls.f_RF_MHz
-        )
-        return multiplier * rf_amp_V0p / f_AC_kHz
+        return self._multiplier * rf_amp_V0p / f_AC_kHz
 
     def freq_from_mz_and_rf(self, mz: float, rf_amp_V0p: float) -> float:
         """Calculate frequency from m/z and RF amplitude."""
-        multiplier = 34.45 / (
-            self.trapping_parameters.basic_controls.r0_cm**2
-            * self.trapping_parameters.basic_controls.f_RF_MHz
-        )
-        return multiplier * rf_amp_V0p / mz
+        return self._multiplier * rf_amp_V0p / mz
 
     def rf_from_mz_and_freq(self, mz: float, f_AC_kHz: float) -> float:
         """Calculate RF amplitude from m/z and frequency."""
-        multiplier = 34.45 / (
-            self.trapping_parameters.basic_controls.r0_cm**2
-            * self.trapping_parameters.basic_controls.f_RF_MHz
-        )
-        return mz * f_AC_kHz / multiplier
+        return mz * f_AC_kHz / self._multiplier
