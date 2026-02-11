@@ -45,6 +45,7 @@ from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
 from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
+from .trapping_parameters import ExcitationStep, TrapControls
 
 logger = logging.getLogger(__name__)
 
@@ -1080,7 +1081,7 @@ class MainWindow(QMainWindow):
                 self.excitation_step_spinbox.setValue(self.selected_excitation_step)
                 self.excitation_step_spinbox.blockSignals(False)
             return
-        
+
         self.selected_excitation_step = value
 
         # Save to state
@@ -1300,21 +1301,20 @@ class MainWindow(QMainWindow):
     def _get_excitation_step_info(self) -> str:
         """Get formatted excitation step information for plot title."""
         # Try to get trapping parameters from waveform or MQTT client
-        trapping_params = None
         if self.current_waveform is not None:
-            trapping_params = self.current_waveform.trapping_parameters
+            trapping_params: TrapControls = self.current_waveform.trapping_parameters
         elif self.mqtt_client.trapping_parameters is not None:
-            trapping_params = self.mqtt_client.trapping_parameters
-
-        if trapping_params is None:
+            trapping_params: TrapControls = self.mqtt_client.trapping_parameters
+        else:
             return ""
-        
+
         # Check if there are any active steps
         active_steps = [
-            i for i, step in enumerate(trapping_params.excitation_steps)
+            i
+            for i, step in enumerate(trapping_params.excitation_steps)
             if step.step_active
         ]
-        
+
         if not active_steps:
             return "⚠ No active excitation steps"
 
@@ -1323,9 +1323,9 @@ class MainWindow(QMainWindow):
 
         if step_index < 0 or step_index >= len(excitation_steps):
             return ""
-        
+
         step = excitation_steps[step_index]
-        
+
         # Check if current step is active
         if not step.step_active:
             return f"⚠ Step {step_index} is inactive"
@@ -1336,41 +1336,15 @@ class MainWindow(QMainWindow):
         else:
             step_label = f"Step {step_index}"
 
-        # Get trap parameters for m/z calculation
-        r0_cm = trapping_params.basic_controls.r0_cm
-        f_RF_MHz = trapping_params.basic_controls.f_RF_MHz
-        multiplier = 34.45 / (r0_cm**2 * f_RF_MHz)
+        mz_range = trapping_params.calculate_step_mz_range(step_index)
 
-        # Determine the m/z range based on sweep settings
-        if step.enable_frequency_sweep or step.enable_rf_amplitude_sweep:
-            # Calculate m/z at begin and end of sweep
-            mz_begin = (
-                multiplier * step.rf_amplitude_begin_V0p / step.frequency_begin_kHz
-            )
-
-            if step.enable_frequency_sweep:
-                f_end = step.frequency_end_kHz
+        if mz_range is not None:
+            if mz_range[0] == mz_range[1]:
+                return f"{step_label}: m/z {mz_range[0]:.1f} Da"
             else:
-                f_end = step.frequency_begin_kHz
+                return f"{step_label}: m/z {mz_range[0]:.1f} → {mz_range[1]:.1f} Da"
 
-            if step.enable_rf_amplitude_sweep:
-                rf_end = step.rf_amplitude_end_V0p
-            else:
-                rf_end = step.rf_amplitude_begin_V0p
-
-            mz_end = multiplier * rf_end / f_end
-
-            # Ensure proper order
-            mz_min = min(mz_begin, mz_end)
-            mz_max = max(mz_begin, mz_end)
-
-            return f"{step_label}: m/z {mz_min:.1f}-{mz_max:.1f} Da"
-        else:
-            # No sweep - single m/z point
-            mz_point = (
-                multiplier * step.rf_amplitude_begin_V0p / step.frequency_begin_kHz
-            )
-            return f"{step_label}: m/z {mz_point:.1f} Da"
+        return ""
 
     def _update_plot_title(self, timestamp_str: Optional[str] = None):
         """Update the plot title with excitation step info and optional timestamp.
@@ -2434,18 +2408,22 @@ class MainWindow(QMainWindow):
     def _update_status_bar_connection(self, message: str):
         """Update status bar with connection info and trapping parameters status."""
         parts = [message]
-        
+
         if self.trapping_params_received:
             parts.append("Trapping params: ✓")
             # Add active step count
             num_active = len(self._active_step_indices)
-            total_steps = len(self._active_step_indices) if self.mqtt_client.trapping_parameters else 0
+            total_steps = (
+                len(self._active_step_indices)
+                if self.mqtt_client.trapping_parameters
+                else 0
+            )
             if self.mqtt_client.trapping_parameters:
                 total_steps = len(self.mqtt_client.trapping_parameters.excitation_steps)
                 parts.append(f"Active steps: {num_active}/{total_steps}")
         else:
             parts.append("Trapping params: ✗")
-        
+
         status_message = " | ".join(parts)
         self.status_bar.showMessage(status_message)
 
@@ -2456,12 +2434,13 @@ class MainWindow(QMainWindow):
             trapping_params = self.current_waveform.trapping_parameters
         elif self.mqtt_client.trapping_parameters is not None:
             trapping_params = self.mqtt_client.trapping_parameters
-        
+
         if trapping_params is None:
             return []
-        
+
         return [
-            i for i, step in enumerate(trapping_params.excitation_steps)
+            i
+            for i, step in enumerate(trapping_params.excitation_steps)
             if step.step_active
         ]
 
@@ -2469,12 +2448,12 @@ class MainWindow(QMainWindow):
         """Find the next active step after the given index."""
         if not self._active_step_indices:
             return None
-        
+
         # Find next active step after current
         for idx in self._active_step_indices:
             if idx > current_index:
                 return idx
-        
+
         # No next step, return None
         return None
 
@@ -2482,12 +2461,12 @@ class MainWindow(QMainWindow):
         """Find the previous active step before the given index."""
         if not self._active_step_indices:
             return None
-        
+
         # Find previous active step before current
         for idx in reversed(self._active_step_indices):
             if idx < current_index:
                 return idx
-        
+
         # No previous step, return None
         return None
 
@@ -2495,13 +2474,14 @@ class MainWindow(QMainWindow):
         """Update the excitation step spinbox with only active steps."""
         if self.excitation_step_spinbox is None or trapping_params is None:
             return
-        
+
         # Get active step indices
         self._active_step_indices = [
-            i for i, step in enumerate(trapping_params.excitation_steps)
+            i
+            for i, step in enumerate(trapping_params.excitation_steps)
             if step.step_active
         ]
-        
+
         if not self._active_step_indices:
             # No active steps
             self.excitation_step_spinbox.setEnabled(False)
@@ -2510,33 +2490,37 @@ class MainWindow(QMainWindow):
             self.excitation_step_spinbox.setValue(0)
             self._update_plot_title()
             return
-        
+
         self.excitation_step_spinbox.setEnabled(True)
-        
+
         # Check if current step is still active
         if self.selected_excitation_step not in self._active_step_indices:
             # Try to find next active step
             new_step = self._find_next_active_step(self.selected_excitation_step)
             if new_step is None:
                 # Try previous active step
-                new_step = self._find_previous_active_step(self.selected_excitation_step)
+                new_step = self._find_previous_active_step(
+                    self.selected_excitation_step
+                )
             if new_step is None:
                 # Fallback to first active step
                 new_step = self._active_step_indices[0]
-            
-            logger.info(f"Current step {self.selected_excitation_step} is inactive, switching to step {new_step}")
+
+            logger.info(
+                f"Current step {self.selected_excitation_step} is inactive, switching to step {new_step}"
+            )
             self.selected_excitation_step = new_step
             # Save to state
             self.state["preferences"]["selected_excitation_step"] = new_step
             state_manager.save_state(self.state_path, self.state)
-        
+
         # Update spinbox range to only show active steps
         self.excitation_step_spinbox.blockSignals(True)
         self.excitation_step_spinbox.setMinimum(min(self._active_step_indices))
         self.excitation_step_spinbox.setMaximum(max(self._active_step_indices))
         self.excitation_step_spinbox.setValue(self.selected_excitation_step)
         self.excitation_step_spinbox.blockSignals(False)
-        
+
         # Update tooltip with active steps info
         active_steps_str = ", ".join(str(i) for i in self._active_step_indices)
         self.excitation_step_spinbox.setToolTip(
@@ -2606,7 +2590,7 @@ class MainWindow(QMainWindow):
 
         # Update excitation step spinbox with only active steps
         self._update_excitation_step_spinbox(trapping_params)
-        
+
         # Update status bar with active step count
         if self.mqtt_client.is_connected():
             self._update_status_bar_connection("Connected")
