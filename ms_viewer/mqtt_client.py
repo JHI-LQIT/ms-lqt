@@ -322,7 +322,7 @@ class MqttClient(QObject):
             try:
                 self.trapping_parameters = parse_trapping_parameters(message.payload)
                 logger.info(
-                    f"Received trapping parameters: {self.trapping_parameters}"
+                    f"Received trapping parameters: {self.trapping_parameters.to_dict()}"
                 )
                 # Emit signal to notify GUI
                 self.trapping_parameters_received.emit(self.trapping_parameters)
