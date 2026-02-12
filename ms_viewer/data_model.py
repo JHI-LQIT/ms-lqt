@@ -23,6 +23,7 @@ Binary format specification:
 import json
 import struct
 from datetime import datetime, timezone
+from typing import Optional
 
 import numpy as np
 
@@ -113,6 +114,7 @@ def parse_payload(
     payload_bytes: bytes,
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse MQTT payload bytes into a WaveformData object.
@@ -128,6 +130,7 @@ def parse_payload(
         payload_bytes: Binary or UTF-8 encoded JSON payload
         trapping_parameters: TrapControls with basic controls and excitation steps
         selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -138,11 +141,17 @@ def parse_payload(
     # Check if payload is binary or JSON
     if len(payload_bytes) >= 4 and payload_bytes[:4] == b"WAVE":
         return _parse_binary_payload(
-            payload_bytes, trapping_parameters, selected_excitation_step
+            payload_bytes,
+            trapping_parameters,
+            selected_excitation_step,
+            collector_metadata,
         )
     else:
         return _parse_json_payload(
-            payload_bytes, trapping_parameters, selected_excitation_step
+            payload_bytes,
+            trapping_parameters,
+            selected_excitation_step,
+            collector_metadata,
         )
 
 
@@ -150,6 +159,7 @@ def _parse_json_payload(
     payload_bytes: bytes,
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse JSON-encoded MQTT payload.
@@ -169,6 +179,7 @@ def _parse_json_payload(
         payload_bytes: UTF-8 encoded JSON payload
         trapping_parameters: TrapControls with basic controls and excitation steps
         selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -273,6 +284,7 @@ def _parse_json_payload(
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
             selected_excitation_step=selected_excitation_step,
+            collector_metadata=collector_metadata,
         )
     except ValueError as e:
         raise PayloadParseError(f"Failed to create WaveformData: {e}")
@@ -282,6 +294,7 @@ def _parse_binary_payload(
     payload_bytes: bytes,
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse binary-encoded MQTT payload.
@@ -303,6 +316,9 @@ def _parse_binary_payload(
 
     Args:
         payload_bytes: Binary encoded payload
+        trapping_parameters: TrapControls with basic controls and excitation steps
+        selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -383,6 +399,7 @@ def _parse_binary_payload(
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
             selected_excitation_step=selected_excitation_step,
+            collector_metadata=collector_metadata,
         )
 
     except struct.error as e:

@@ -28,6 +28,7 @@ class WaveformData:
         timestamp: datetime,
         trapping_parameters: TrapControls,
         selected_excitation_step: int,
+        collector_metadata: str | None = None,
     ):
         """
         Initialize WaveformData.
@@ -39,6 +40,7 @@ class WaveformData:
             timestamp: Capture timestamp
             trapping_parameters: TrapControls with basic controls and excitation steps
             selected_excitation_step: Index of the excitation step to use for m/z calculation (default: 0)
+            collector_metadata: Optional JSON metadata from collector parameters topic
         Raises:
             ValueError: If parameters are invalid
         """
@@ -61,6 +63,7 @@ class WaveformData:
         self.timestamp = timestamp
         self.trapping_parameters = trapping_parameters
         self.selected_excitation_step = selected_excitation_step
+        self.collector_metadata = collector_metadata
 
         # Compute time axis
         N = lengths[0]

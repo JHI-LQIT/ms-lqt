@@ -33,9 +33,9 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
     """
     try:
         # Add .csv extension if not present
-        if not path.lower().endswith('.csv'):
-            path = path + '.csv'
-        
+        if not path.lower().endswith(".csv"):
+            path = path + ".csv"
+
         with open(path, "w", newline="") as csvfile:
             # Write metadata as a single comment line with # as delimiter
             step = waveform.trapping_parameters.excitation_steps[
@@ -75,6 +75,10 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
                 f"# Number of Samples: {len(waveform.mz)}\n"
             )
             csvfile.write(metadata)
+
+            # Write collector metadata if available
+            if waveform.collector_metadata:
+                csvfile.write(f"# Collected metadata: {waveform.collector_metadata}\n")
 
             # Get sorted channel names for consistent ordering
             channel_names = sorted(waveform.channels.keys())
