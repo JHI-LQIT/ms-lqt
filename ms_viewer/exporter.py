@@ -25,13 +25,17 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
     - Subsequent rows: mz value followed by amplitude for each channel
 
     Args:
-        path: Path to the output CSV file
+        path: Path to the output CSV file (.csv extension added automatically if missing)
         waveform: WaveformData object to export
 
     Returns:
         True if successful, False otherwise
     """
     try:
+        # Add .csv extension if not present
+        if not path.lower().endswith('.csv'):
+            path = path + '.csv'
+        
         with open(path, "w", newline="") as csvfile:
             # Write metadata as a single comment line with # as delimiter
             step = waveform.trapping_parameters.excitation_steps[
