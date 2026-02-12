@@ -15,19 +15,36 @@ import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import Qt as QtCore
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QDoubleSpinBox,
-                             QFileDialog, QGroupBox, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QMainWindow, QMessageBox,
-                             QPushButton, QRadioButton, QScrollArea, QSpinBox,
-                             QSplitter, QStatusBar, QTableWidget,
-                             QTableWidgetItem, QVBoxLayout, QWidget)
+from PyQt5.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import state_manager
 from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
-from .roi_statistics import (ROIDefinition, ROIStatistics,
-                             ROIStatisticsCalculator)
+from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
 from .trapping_parameters import ExcitationStep, TrapControls
 
 logger = logging.getLogger(__name__)
@@ -97,7 +114,9 @@ class MqttConfigDialog(QDialog):
         collector_layout.addWidget(QLabel("Collector Parameters Topic:"))
         self.main_window.collector_parameters_topic_input = QLineEdit()
         self.main_window.collector_parameters_topic_input.setText(
-            self.main_window.state["mqtt"].get("collector_parameters_topic", "lqt/collector/parameters")
+            self.main_window.state["mqtt"].get(
+                "collector_parameters_topic", "lqt/collector/parameters"
+            )
         )
         collector_layout.addWidget(self.main_window.collector_parameters_topic_input)
         primary_layout.addLayout(collector_layout)
@@ -1429,7 +1448,9 @@ class MainWindow(QMainWindow):
             broker_port=mqtt_config["broker_port"],
             input_topic=mqtt_config["input_topic"],
             trapping_parameters_topic=mqtt_config["trapping_parameters_topic"],
-            collector_parameters_topic=mqtt_config.get("collector_parameters_topic", "lqt/collector/parameters"),
+            collector_parameters_topic=mqtt_config.get(
+                "collector_parameters_topic", "lqt/collector/parameters"
+            ),
             output_topic=mqtt_config["output_topic"],
             client_id=mqtt_config.get("client_id", "waveform_viewer"),
             keepalive=mqtt_config.get("keepalive", 60),
@@ -1638,7 +1659,9 @@ class MainWindow(QMainWindow):
         broker_port = self.broker_port_input.value()
         input_topic = self.input_topic_input.text().strip()
         trapping_parameters_topic = self.trapping_parameters_topic_input.text().strip()
-        collector_parameters_topic = self.collector_parameters_topic_input.text().strip()
+        collector_parameters_topic = (
+            self.collector_parameters_topic_input.text().strip()
+        )
         output_topic = self.output_topic_input.text().strip()
         statistics_topic = self.stats_topic_input.text().strip()
 
