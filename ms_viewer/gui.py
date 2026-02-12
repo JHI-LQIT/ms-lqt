@@ -2673,7 +2673,7 @@ class MainWindow(QMainWindow):
 
         # Update status
         self.status_bar.showMessage(
-            f"Received waveform with {len(waveform.mz)} samples at {waveform.timestamp.strftime('%H:%M:%S')}",
+            f"Received MS with {len(waveform.mz)} samples at {waveform.timestamp.strftime('%H:%M:%S')}",
             5000,
         )
 
