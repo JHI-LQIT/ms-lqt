@@ -2507,6 +2507,11 @@ class MainWindow(QMainWindow):
             self.state["preferences"]["selected_excitation_step"] = new_step
             state_manager.save_state(self.state_path, self.state)
 
+            # Update MQTT clients to use new excitation step for future waveforms
+            self.mqtt_client.set_selected_excitation_step(new_step)
+            if self.mqtt_output_client:
+                self.mqtt_output_client.set_selected_excitation_step(new_step)
+
         # Update spinbox range to only show active steps
         self.excitation_step_spinbox.blockSignals(True)
         self.excitation_step_spinbox.setMinimum(min(self._active_step_indices))

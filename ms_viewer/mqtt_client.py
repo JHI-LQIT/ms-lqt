@@ -305,17 +305,31 @@ class MqttClient(QObject):
                 # Parse the payload
                 if not self.trapping_parameters:
                     return
-                # Check if any excitation step is active
-                has_active_step = any(
-                    step.step_active
-                    for step in self.trapping_parameters.excitation_steps
-                )
-                if not has_active_step:
+
+                # Check if the selected excitation step is active
+                if (
+                    self.selected_excitation_step < 0
+                    or self.selected_excitation_step
+                    >= len(self.trapping_parameters.excitation_steps)
+                ):
+                    logger.warning(
+                        f"Selected excitation step {self.selected_excitation_step} is out of range"
+                    )
                     return
+
+                selected_step = self.trapping_parameters.excitation_steps[
+                    self.selected_excitation_step
+                ]
+                if not selected_step.step_active:
+                    logger.debug(
+                        f"Skipping waveform: selected step {self.selected_excitation_step} is not active"
+                    )
+                    return
+
                 waveform = parse_payload(
-                    message.payload, 
+                    message.payload,
                     self.trapping_parameters,
-                    selected_excitation_step=self.selected_excitation_step
+                    selected_excitation_step=self.selected_excitation_step,
                 )
 
                 # Emit signal with parsed waveform
