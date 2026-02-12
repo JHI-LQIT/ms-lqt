@@ -316,6 +316,7 @@ class StatisticsWorker(QThread):
                 channels=scaled_channels,
                 timestamp=averaged_waveform.timestamp,
                 trapping_parameters=averaged_waveform.trapping_parameters,
+                selected_excitation_step=averaged_waveform.selected_excitation_step,
             )
 
             if self._should_stop:
@@ -397,6 +398,7 @@ class StatisticsWorker(QThread):
             channels=averaged_channels,
             timestamp=latest_timestamp,
             trapping_parameters=first.trapping_parameters,
+            selected_excitation_step=first.selected_excitation_step,
         )
 
 
@@ -623,6 +625,9 @@ class MainWindow(QMainWindow):
         )
         self.state_path = state_path
         self.current_waveform: Optional[WaveformData] = None
+        self.original_waveform: Optional[WaveformData] = (
+            None  # Store original unmodified waveform
+        )
         self.plot_curves: Dict[str, pg.PlotDataItem] = {}
         self.regions: List[pg.LinearRegionItem] = []
         # Store m/z bounds for each region (key: region object, value: (start_mz, end_mz))
@@ -744,6 +749,9 @@ class MainWindow(QMainWindow):
 
         # Apply MQTT config from state
         self._apply_mqtt_config_from_state()
+
+        # Set initial selected excitation step in MQTT client
+        self.mqtt_client.set_selected_excitation_step(self.selected_excitation_step)
 
         # Connect MQTT signals
         self.mqtt_client.waveform_received.connect(self.on_waveform_received)
@@ -1090,29 +1098,13 @@ class MainWindow(QMainWindow):
         self.state["preferences"]["selected_excitation_step"] = value
         state_manager.save_state(self.state_path, self.state)
 
-        # Reprocess current waveform with new excitation step if available
-        if self.current_waveform:
-            # Create new WaveformData with updated excitation step
-            from .waveform_data import WaveformData
+        # Update MQTT clients to use new excitation step for future waveforms
+        self.mqtt_client.set_selected_excitation_step(value)
+        if self.mqtt_output_client:
+            self.mqtt_output_client.set_selected_excitation_step(value)
 
-            try:
-                new_waveform = WaveformData(
-                    t0=self.current_waveform.t0,
-                    dt=self.current_waveform.dt,
-                    channels={
-                        k: v.copy() for k, v in self.current_waveform.channels.items()
-                    },
-                    timestamp=self.current_waveform.timestamp,
-                    trapping_parameters=self.current_waveform.trapping_parameters,
-                    selected_excitation_step=value,
-                )
-                self.current_waveform = new_waveform
-                self._update_plot(new_waveform)
-            except Exception as e:
-                logger.error(f"Failed to update waveform with new excitation step: {e}")
-        else:
-            # Update title even without waveform
-            self._update_plot_title()
+        # Update plot title to show new step info (without recalculating waveform)
+        self._update_plot_title()
 
     def _setup_action_buttons(self):
         """Set up action buttons panel."""
@@ -1422,6 +1414,7 @@ class MainWindow(QMainWindow):
             channels=averaged_channels,
             timestamp=latest_timestamp,
             trapping_parameters=first.trapping_parameters,
+            selected_excitation_step=first.selected_excitation_step,
         )
 
     def _apply_mqtt_config_from_state(self):
@@ -2603,6 +2596,7 @@ class MainWindow(QMainWindow):
         """Handle received waveform data."""
         first_waveform = self.current_waveform is None
         self.current_waveform = waveform
+        self.original_waveform = waveform  # Store original unmodified waveform
         self._waveform_counter += 1
 
         # Update region positions on first waveform if we have restored regions

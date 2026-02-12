@@ -72,6 +72,17 @@ class MqttClient(QObject):
         self._subscribed = False
 
         self.trapping_parameters: Optional[TrapControls] = None
+        self.selected_excitation_step = 0  # Default to step 0
+
+    def set_selected_excitation_step(self, step: int):
+        """
+        Set the selected excitation step for m/z calculation.
+
+        Args:
+            step: Index of the excitation step to use
+        """
+        self.selected_excitation_step = step
+        logger.debug(f"Selected excitation step set to {step}")
 
     def set_config(
         self,
@@ -301,7 +312,11 @@ class MqttClient(QObject):
                 )
                 if not has_active_step:
                     return
-                waveform = parse_payload(message.payload, self.trapping_parameters)
+                waveform = parse_payload(
+                    message.payload, 
+                    self.trapping_parameters,
+                    selected_excitation_step=self.selected_excitation_step
+                )
 
                 # Emit signal with parsed waveform
                 logger.debug(f"Received waveform: {waveform}")

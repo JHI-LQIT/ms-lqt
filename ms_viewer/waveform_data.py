@@ -27,7 +27,7 @@ class WaveformData:
         channels: Dict[str, np.ndarray],
         timestamp: datetime,
         trapping_parameters: TrapControls,
-        selected_excitation_step: int = 0,
+        selected_excitation_step: int,
     ):
         """
         Initialize WaveformData.

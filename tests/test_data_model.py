@@ -520,6 +520,7 @@ class TestEncodePayload(unittest.TestCase):
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=self.trap_controls,
+            selected_excitation_step=0,
         )
 
         payload_bytes = encode_payload(waveform)
@@ -548,8 +549,8 @@ class TestEncodePayload(unittest.TestCase):
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=self.trap_controls,
+            selected_excitation_step=0,
         )
-
         # Encode
         payload_bytes = encode_payload(original)
 
@@ -576,6 +577,7 @@ class TestEncodePayload(unittest.TestCase):
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=self.trap_controls,
+            selected_excitation_step=0,
         )
 
         with self.assertRaises(ValueError) as ctx:
@@ -598,6 +600,7 @@ class TestEncodePayload(unittest.TestCase):
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=self.trap_controls,
+            selected_excitation_step=0,
         )
 
         # Encode twice
