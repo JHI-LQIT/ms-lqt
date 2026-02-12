@@ -1034,11 +1034,13 @@ class MainWindow(QMainWindow):
         excitation_layout = QHBoxLayout()
         excitation_layout.addWidget(QLabel("Excitation Step:"))
         self.excitation_step_spinbox = QSpinBox()
-        self.excitation_step_spinbox.setMinimum(0)
+        self.excitation_step_spinbox.setMinimum(1)
         self.excitation_step_spinbox.setMaximum(
-            0
+            1
         )  # Will be updated when trapping params are received
-        self.excitation_step_spinbox.setValue(self.selected_excitation_step)
+        self.excitation_step_spinbox.setValue(
+            self.selected_excitation_step + 1
+        )  # Display as 1-based
         self.excitation_step_spinbox.setToolTip(
             "Select which excitation step to use for m/z calculation"
         )
@@ -1080,28 +1082,36 @@ class MainWindow(QMainWindow):
 
     def _on_excitation_step_changed(self, value: int):
         """Handle excitation step selection change."""
+        # Convert from 1-based display to 0-based internal index
+        internal_value = value - 1
+
         # Validate that the selected step is active
-        if self._active_step_indices and value not in self._active_step_indices:
+        if (
+            self._active_step_indices
+            and internal_value not in self._active_step_indices
+        ):
             logger.warning(f"Step {value} is not active, ignoring change")
             # Reset to current valid step
             if self.excitation_step_spinbox is not None:
                 self.excitation_step_spinbox.blockSignals(True)
-                self.excitation_step_spinbox.setValue(self.selected_excitation_step)
+                self.excitation_step_spinbox.setValue(
+                    self.selected_excitation_step + 1
+                )  # Display as 1-based
                 self.excitation_step_spinbox.blockSignals(False)
             return
 
-        self.selected_excitation_step = value
+        self.selected_excitation_step = internal_value
 
         # Save to state
         if "preferences" not in self.state:
             self.state["preferences"] = {}
-        self.state["preferences"]["selected_excitation_step"] = value
+        self.state["preferences"]["selected_excitation_step"] = internal_value
         state_manager.save_state(self.state_path, self.state)
 
         # Update MQTT clients to use new excitation step for future waveforms
-        self.mqtt_client.set_selected_excitation_step(value)
+        self.mqtt_client.set_selected_excitation_step(internal_value)
         if self.mqtt_output_client:
-            self.mqtt_output_client.set_selected_excitation_step(value)
+            self.mqtt_output_client.set_selected_excitation_step(internal_value)
 
         # Update plot title to show new step info (without recalculating waveform)
         self._update_plot_title()
@@ -1320,13 +1330,14 @@ class MainWindow(QMainWindow):
 
         # Check if current step is active
         if not step.step_active:
-            return f"⚠ Step {step_index} is inactive"
+            return f"⚠ Step {step_index + 1} is inactive"
 
-        # Build step info string with step number
+        # Build step info string with step number (display as 1-based)
+        display_index = step_index + 1
         if step.step_name:
-            step_label = f"Step {step_index} ({step.step_name})"
+            step_label = f"Step {display_index} ({step.step_name})"
         else:
-            step_label = f"Step {step_index}"
+            step_label = f"Step {display_index}"
 
         mz_range = trapping_params.calculate_step_mz_range(step_index)
 
@@ -2478,9 +2489,9 @@ class MainWindow(QMainWindow):
         if not self._active_step_indices:
             # No active steps
             self.excitation_step_spinbox.setEnabled(False)
-            self.excitation_step_spinbox.setMinimum(0)
-            self.excitation_step_spinbox.setMaximum(0)
-            self.excitation_step_spinbox.setValue(0)
+            self.excitation_step_spinbox.setMinimum(1)
+            self.excitation_step_spinbox.setMaximum(1)
+            self.excitation_step_spinbox.setValue(1)
             self._update_plot_title()
             return
 
@@ -2512,15 +2523,15 @@ class MainWindow(QMainWindow):
             if self.mqtt_output_client:
                 self.mqtt_output_client.set_selected_excitation_step(new_step)
 
-        # Update spinbox range to only show active steps
+        # Update spinbox range to only show active steps (display as 1-based)
         self.excitation_step_spinbox.blockSignals(True)
-        self.excitation_step_spinbox.setMinimum(min(self._active_step_indices))
-        self.excitation_step_spinbox.setMaximum(max(self._active_step_indices))
-        self.excitation_step_spinbox.setValue(self.selected_excitation_step)
+        self.excitation_step_spinbox.setMinimum(min(self._active_step_indices) + 1)
+        self.excitation_step_spinbox.setMaximum(max(self._active_step_indices) + 1)
+        self.excitation_step_spinbox.setValue(self.selected_excitation_step + 1)
         self.excitation_step_spinbox.blockSignals(False)
 
-        # Update tooltip with active steps info
-        active_steps_str = ", ".join(str(i) for i in self._active_step_indices)
+        # Update tooltip with active steps info (display as 1-based)
+        active_steps_str = ", ".join(str(i + 1) for i in self._active_step_indices)
         self.excitation_step_spinbox.setToolTip(
             f"Select active excitation step for m/z calculation.\nActive steps: {active_steps_str}"
         )
