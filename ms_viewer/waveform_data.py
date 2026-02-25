@@ -3,7 +3,7 @@ from typing import Dict
 
 import numpy as np
 
-from .trapping_parameters import TrappingParameters
+from .trapping_parameters import TrapControls
 
 
 class WaveformData:
@@ -16,6 +16,8 @@ class WaveformData:
         times (np.ndarray): Computed time values for each sample
         channels (Dict[str, np.ndarray]): Dictionary of channel names to amplitude arrays
         timestamp (datetime): Timestamp when the waveform was captured
+        trapping_parameters (TrapControls): Trapping control parameters
+        selected_excitation_step (int): Index of the excitation step used for m/z calculation
     """
 
     def __init__(
@@ -24,7 +26,9 @@ class WaveformData:
         dt: float,
         channels: Dict[str, np.ndarray],
         timestamp: datetime,
-        trapping_parameters: TrappingParameters,
+        trapping_parameters: TrapControls,
+        selected_excitation_step: int,
+        collector_metadata: str | None = None,
     ):
         """
         Initialize WaveformData.
@@ -34,7 +38,9 @@ class WaveformData:
             dt: Time step between samples in seconds
             channels: Dictionary mapping channel names to amplitude arrays
             timestamp: Capture timestamp
-            trapping_parameters: TrappingParameters
+            trapping_parameters: TrapControls with basic controls and excitation steps
+            selected_excitation_step: Index of the excitation step to use for m/z calculation (default: 0)
+            collector_metadata: Optional JSON metadata from collector parameters topic
         Raises:
             ValueError: If parameters are invalid
         """
@@ -56,9 +62,14 @@ class WaveformData:
         self.channels = channels
         self.timestamp = timestamp
         self.trapping_parameters = trapping_parameters
+        self.selected_excitation_step = selected_excitation_step
+        self.collector_metadata = collector_metadata
+
         # Compute time axis
         N = lengths[0]
-        self.mz, self.f_AC_kHz, self.rf_amp_V0p, start_index, n_samples = self.calc_mz_values(trapping_parameters, dt, N)
+        self.mz, self.f_AC_kHz, self.rf_amp_V0p, start_index, n_samples = (
+            self.calc_mz_values(dt, N, selected_excitation_step)
+        )
 
         # Cut channels to match m/z length and sort by m/z
         sorted_indices = np.argsort(self.mz)
@@ -70,26 +81,38 @@ class WaveformData:
                 start_index : start_index + n_samples
             ][sorted_indices]
 
-
     def __repr__(self):
         return (
             f"WaveformData(t0={self.t0}, dt={self.dt}, "
             f"channels={list(self.channels.keys())}, "
             f"n_samples={len(self.mz)}, "
             f"timestamp={self.timestamp.isoformat()}, "
-            f"trapping_parameters={self.trapping_parameters})"
+            f"trapping_parameters={self.trapping_parameters}, "
+            f"selected_excitation_step={self.selected_excitation_step})"
+        )
+
+    @property
+    def _multiplier(self) -> float:
+        """Calculate the m/z conversion multiplier from trap parameters.
+
+        The multiplier is used in the formula: m/z = multiplier * V_RF / f_secular
+        where multiplier = 34.45 / (r0^2 * f_RF)
+        """
+        return 34.45 / (
+            self.trapping_parameters.basic_controls.r0_cm**2
+            * self.trapping_parameters.basic_controls.f_RF_MHz
         )
 
     def calc_mz_values(
-        self, trapping_params: TrappingParameters, dt: float, N: int
+        self, dt: float, N: int, step_index: int = 0
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
         """
         Calculate m/z values from trapping parameters and time data.
 
         Args:
-            trapping_params (TrappingParameters): The trapping parameters.
             dt (float): The time interval between samples.
             N (int): The number of samples.
+            step_index (int): Index of the excitation step to use (default: 0).
 
         Returns:
             np.ndarray: The calculated m/z values.
@@ -98,46 +121,50 @@ class WaveformData:
             int: The start index used in the calculation.
             int: The number of samples used in the calculation.
         """
+        # Validate step index
+        if step_index < 0 or step_index >= len(
+            self.trapping_parameters.excitation_steps
+        ):
+            step_index = 0
 
-        start_idx = int(
-            np.ceil(trapping_params.secular_excitation_begin_ms / (1000.0 * dt))
-        )
-        end_idx = int(
-            np.floor(trapping_params.secular_excitation_end_ms / (1000.0 * dt))
-        )
+        excitation_step = self.trapping_parameters.excitation_steps[step_index]
+
+        # Calculate start and end time for this excitation step
+        start_time_ms = self.trapping_parameters.calculate_step_start_time(step_index)
+        end_time_ms = start_time_ms + excitation_step.step_duration_ms
+
+        start_idx = int(np.ceil(start_time_ms / (1000.0 * dt)))
+        end_idx = int(np.floor(end_time_ms / (1000.0 * dt)))
         if end_idx > N:
             end_idx = N
         n_samples = end_idx - start_idx
 
-        f_begin = trapping_params.frequency_begin_khz
+        # Get frequency values
+        f_begin = excitation_step.frequency_begin_kHz
         f_AC = (
-            np.linspace(f_begin, trapping_params.frequency_end_khz, n_samples)
-            if trapping_params.frequency_sweep
+            np.linspace(f_begin, excitation_step.frequency_end_kHz, n_samples)
+            if excitation_step.enable_frequency_sweep
             else np.full(n_samples, f_begin)
         )
 
-        rf_begin = trapping_params.rf_amplitude_begin_v0p
+        # Get RF amplitude values
+        rf_begin = excitation_step.rf_amplitude_begin_V0p
         rf_amp = (
-            np.linspace(rf_begin, trapping_params.rf_amplitude_end_v0p, n_samples)
-            if trapping_params.rf_amplitude_sweep
+            np.linspace(rf_begin, excitation_step.rf_amplitude_end_V0p, n_samples)
+            if excitation_step.enable_rf_amplitude_sweep
             else np.full(n_samples, rf_begin)
         )
 
-        multiplier = 34.45 / (trapping_params.r0_cm**2 * trapping_params.f_RF_MHz)
+        return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
 
-        return multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
-    
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
         """Calculate m/z from RF amplitude and frequency."""
-        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
-        return multiplier * rf_amp_V0p / f_AC_kHz
-    
+        return self._multiplier * rf_amp_V0p / f_AC_kHz
+
     def freq_from_mz_and_rf(self, mz: float, rf_amp_V0p: float) -> float:
         """Calculate frequency from m/z and RF amplitude."""
-        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
-        return multiplier * rf_amp_V0p / mz
-    
+        return self._multiplier * rf_amp_V0p / mz
+
     def rf_from_mz_and_freq(self, mz: float, f_AC_kHz: float) -> float:
         """Calculate RF amplitude from m/z and frequency."""
-        multiplier = 34.45 / (self.trapping_parameters.r0_cm**2 * self.trapping_parameters.f_RF_MHz)
-        return mz * f_AC_kHz / multiplier
+        return mz * f_AC_kHz / self._multiplier

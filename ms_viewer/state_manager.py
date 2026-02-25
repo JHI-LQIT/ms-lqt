@@ -33,6 +33,7 @@ def load_state(path: str) -> Dict[str, Any]:
             "output_topic": "lqt/lqt_ms/republish",
             "statistics_topic": "lqt/lqt_ms/statistics",
             "trapping_parameters_topic": "lqt/trapping/parameters",
+            "collector_parameters_topic": "lqt/collector/parameters",
             "client_id": "ms_viewer",
             "keepalive": 60,
             # Secondary broker for output/statistics publishing

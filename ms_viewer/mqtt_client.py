@@ -12,9 +12,21 @@ import paho.mqtt.client as mqtt
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .data_model import PayloadParseError, parse_payload, parse_trapping_parameters
-from .trapping_parameters import TrappingParameters
+from .trapping_parameters import TrapControls
 
 logger = logging.getLogger(__name__)
+
+
+def create_unique_id() -> str:
+    """
+    Create a unique client ID using the current timestamp.
+
+    Returns:
+        A unique string to use as MQTT client ID.
+    """
+    import time
+
+    return f"{int(time.time() * 1000)}"
 
 
 class MqttClient(QObject):
@@ -32,6 +44,7 @@ class MqttClient(QObject):
 
     # Qt signals
     waveform_received = pyqtSignal(object)  # WaveformData
+    trapping_parameters_received = pyqtSignal(object)  # TrapControls
     connection_state_changed = pyqtSignal(bool, str)  # connected, message
     error_occurred = pyqtSignal(str)  # error message
 
@@ -49,8 +62,9 @@ class MqttClient(QObject):
         self.broker_port = 1883
         self.input_topic = "lqt/picoscope/waveform"
         self.trapping_parameters_topic = "lqt/trapping/parameters"
+        self.collector_parameters_topic = "lqt/collector/parameters"
         self.output_topic = "lqt/lqt_ms/republish"
-        self.client_id = "ms_viewer"
+        self.client_id = f"ms_viewer_{create_unique_id()}"
         self.keepalive = 60
 
         # MQTT client
@@ -58,7 +72,19 @@ class MqttClient(QObject):
         self._connected = False
         self._subscribed = False
 
-        self.trapping_parameters: Optional[TrappingParameters] = None
+        self.trapping_parameters: Optional[TrapControls] = None
+        self.collector_metadata: Optional[str] = None
+        self.selected_excitation_step = 0  # Default to step 0
+
+    def set_selected_excitation_step(self, step: int):
+        """
+        Set the selected excitation step for m/z calculation.
+
+        Args:
+            step: Index of the excitation step to use
+        """
+        self.selected_excitation_step = step
+        logger.debug(f"Selected excitation step set to {step}")
 
     def set_config(
         self,
@@ -66,6 +92,7 @@ class MqttClient(QObject):
         broker_port: int,
         input_topic: str,
         trapping_parameters_topic: str,
+        collector_parameters_topic: str,
         output_topic: str,
         client_id: str = "ms_viewer",
         keepalive: int = 60,
@@ -78,6 +105,7 @@ class MqttClient(QObject):
             broker_port: MQTT broker port
             input_topic: Topic to subscribe to for incoming waveforms
             trapping_parameters_topic: Topic to subscribe to for trapping parameters
+            collector_parameters_topic: Topic to subscribe to for collector parameters
             output_topic: Topic to publish outgoing waveforms
             client_id: MQTT client ID
             keepalive: Keep-alive interval in seconds
@@ -86,13 +114,15 @@ class MqttClient(QObject):
         self.broker_port = broker_port
         self.input_topic = input_topic
         self.trapping_parameters_topic = trapping_parameters_topic
+        self.collector_parameters_topic = collector_parameters_topic
         self.output_topic = output_topic
         self.client_id = client_id
         self.keepalive = keepalive
 
         logger.info(
             f"MQTT config updated: {broker_host}:{broker_port}, "
-            f"input={input_topic}, trapping_parameters={trapping_parameters_topic}, output={output_topic}"
+            f"input={input_topic}, trapping_parameters={trapping_parameters_topic}, "
+            f"collector_parameters={collector_parameters_topic}, output={output_topic}"
         )
 
     def connect(self):
@@ -182,6 +212,21 @@ class MqttClient(QObject):
                 self.error_occurred.emit(error_msg)
         except Exception as e:
             error_msg = f"Exception during subscribe to trapping parameters topic: {e}"
+            logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+
+        try:
+            logger.info(
+                f"Subscribing to collector parameters topic: {self.collector_parameters_topic}"
+            )
+            result, mid = self._client.subscribe(self.collector_parameters_topic, qos=1)
+
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                error_msg = f"Failed to subscribe to {self.collector_parameters_topic}: {mqtt.error_string(result)}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)
+        except Exception as e:
+            error_msg = f"Exception during subscribe to collector parameters topic: {e}"
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
 
@@ -281,9 +326,33 @@ class MqttClient(QObject):
                 # Parse the payload
                 if not self.trapping_parameters:
                     return
-                if not self.trapping_parameters.secular_excitation_enabled:
+
+                # Check if the selected excitation step is active
+                if (
+                    self.selected_excitation_step < 0
+                    or self.selected_excitation_step
+                    >= len(self.trapping_parameters.excitation_steps)
+                ):
+                    logger.warning(
+                        f"Selected excitation step {self.selected_excitation_step} is out of range"
+                    )
                     return
-                waveform = parse_payload(message.payload, self.trapping_parameters)
+
+                selected_step = self.trapping_parameters.excitation_steps[
+                    self.selected_excitation_step
+                ]
+                if not selected_step.step_active:
+                    logger.debug(
+                        f"Skipping waveform: selected step {self.selected_excitation_step} is not active"
+                    )
+                    return
+
+                waveform = parse_payload(
+                    message.payload,
+                    self.trapping_parameters,
+                    selected_excitation_step=self.selected_excitation_step,
+                    collector_metadata=self.collector_metadata,
+                )
 
                 # Emit signal with parsed waveform
                 logger.debug(f"Received waveform: {waveform}")
@@ -303,10 +372,28 @@ class MqttClient(QObject):
             logger.debug("Received message on trapping parameters topic")
             try:
                 self.trapping_parameters = parse_trapping_parameters(message.payload)
-                logger.debug(
-                    f"Received trapping parameters: {self.trapping_parameters}"
+                logger.info(
+                    f"Received trapping parameters: {self.trapping_parameters.to_dict()}"
                 )
+                # Emit signal to notify GUI
+                self.trapping_parameters_received.emit(self.trapping_parameters)
             except Exception as e:
                 error_msg = f"Failed to parse trapping parameters payload: {e}"
+                logger.error(error_msg)
+                self.error_occurred.emit(error_msg)
+        elif message.topic == self.collector_parameters_topic:
+            # Handle collector parameters messages
+            logger.debug("Received message on collector parameters topic")
+            try:
+                # Store the JSON payload as a single-line string
+                import json
+
+                payload_dict = json.loads(message.payload.decode("utf-8"))
+                self.collector_metadata = json.dumps(
+                    payload_dict, separators=(",", ":")
+                )
+                logger.info(f"Received collector metadata: {self.collector_metadata}")
+            except Exception as e:
+                error_msg = f"Failed to parse collector parameters payload: {e}"
                 logger.error(error_msg)
                 self.error_occurred.emit(error_msg)

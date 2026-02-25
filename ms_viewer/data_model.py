@@ -23,10 +23,11 @@ Binary format specification:
 import json
 import struct
 from datetime import datetime, timezone
+from typing import Optional
 
 import numpy as np
 
-from .trapping_parameters import TrappingParameters
+from .trapping_parameters import TrapControls
 from .waveform_data import WaveformData
 
 
@@ -36,31 +37,40 @@ class PayloadParseError(Exception):
     pass
 
 
-def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
+def parse_trapping_parameters(payload_bytes: bytes) -> TrapControls:
     """
-    Parse MQTT payload into TrappingParameters object.
+    Parse MQTT payload into TrapControls object.
 
     Args:
         payload_bytes (bytes): JSON-encoded payload
 
     Returns:
-        TrappingParameters: Parsed trapping parameters
+        TrapControls: Parsed trapping parameters
 
     Raises:
         PayloadParseError: If payload is malformed or validation fails
 
-    Expected JSON format:
+    Expected JSON format (new structure):
     {
-        "injection_time": 10.0,
-        "secular_excitation_delay": 20.0,
-        "trapping_time": 80.0,
-        "frequency_begin": 165.0,
-        "frequency_end": 180.0,
-        "enable_frequency_sweep": true,
-        "rf_amplitude_begin": 50.0,
-        "rf_amplitude_end": 50.0,
-        "enable_rf_amplitude_sweep": false
+        "basic_controls": {
+            "r0_cm": 0.475,
+            "f_RF_MHz": 2.112,
+            "rf_amplitude_V0p": 0.0,
+            "injection_duration_ms": 5.0,
+            ...
+        },
+        "excitation_steps": [
+            {
+                "step_name": "Step1",
+                "step_active": true,
+                "step_delay_ms": 10.0,
+                "step_duration_ms": 20.0,
+                ...
+            }
+        ]
     }
+
+    Also supports legacy flat format for backward compatibility.
     """
 
     try:
@@ -75,52 +85,36 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrappingParameters:
     except json.JSONDecodeError as e:
         raise PayloadParseError(f"Failed to parse JSON: {e}")
 
-    # Validate required fields
-    required_fields = [
-        "enable_trapping",
-        "secular_on",
-        "injection_time",
-        "secular_excitation_delay",
-        "trapping_time",
-        "frequency_begin",
-        "frequency_end",
-        "enable_frequency_sweep",
-        "rf_amplitude_begin",
-        "rf_amplitude_end",
-        "enable_rf_amplitude_sweep",
-        "r0_cm",
-        "f_RF_MHz",
-    ]
-    missing_fields = [field for field in required_fields if field not in data]
-    if missing_fields:
-        raise PayloadParseError(f"Missing required fields: {missing_fields}")
-    try:
-        params = TrappingParameters(
-            secular_excitation_enabled=bool(data["secular_on"])
-            and bool(data["enable_trapping"]),
-            secular_excitation_begin_ms=float(
-                data["injection_time"] + data["secular_excitation_delay"]
-            ),
-            secular_excitation_end_ms=float(
-                data["injection_time"]
-                + data["trapping_time"]
-            ),
-            frequency_begin_khz=float(data["frequency_begin"]),
-            frequency_end_khz=float(data["frequency_end"]),
-            frequency_sweep=bool(data["enable_frequency_sweep"]),
-            rf_amplitude_begin_v0p=float(data["rf_amplitude_begin"]),
-            rf_amplitude_end_v0p=float(data["rf_amplitude_end"]),
-            rf_amplitude_sweep=bool(data["enable_rf_amplitude_sweep"]),
-            r0_cm=float(data["r0_cm"]),
-            f_RF_MHz=float(data["f_RF_MHz"]),
-        )
-    except (ValueError, TypeError) as e:
-        raise PayloadParseError(f"Invalid parameter value: {e}")
-    return params
+    # Check if this is the new nested format or legacy flat format
+    if "basic_controls" in data or "excitation_steps" in data:
+        # New nested format
+        try:
+            return TrapControls.from_dict(data)
+        except (ValueError, TypeError) as e:
+            raise PayloadParseError(f"Invalid parameter value in new format: {e}")
+    else:
+        # Legacy flat format - convert to new structure
+        # Validate required fields for legacy format
+        required_fields = [
+            "enable_trapping",
+            "r0_cm",
+            "f_RF_MHz",
+        ]
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            raise PayloadParseError(f"Missing required fields: {missing_fields}")
+
+        try:
+            return TrapControls.from_flat_dict(data)
+        except (ValueError, TypeError) as e:
+            raise PayloadParseError(f"Invalid parameter value in legacy format: {e}")
 
 
 def parse_payload(
-    payload_bytes: bytes, trapping_parameters: TrappingParameters
+    payload_bytes: bytes,
+    trapping_parameters: TrapControls,
+    selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse MQTT payload bytes into a WaveformData object.
@@ -134,6 +128,9 @@ def parse_payload(
 
     Args:
         payload_bytes: Binary or UTF-8 encoded JSON payload
+        trapping_parameters: TrapControls with basic controls and excitation steps
+        selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -143,13 +140,26 @@ def parse_payload(
     """
     # Check if payload is binary or JSON
     if len(payload_bytes) >= 4 and payload_bytes[:4] == b"WAVE":
-        return _parse_binary_payload(payload_bytes, trapping_parameters)
+        return _parse_binary_payload(
+            payload_bytes,
+            trapping_parameters,
+            selected_excitation_step,
+            collector_metadata,
+        )
     else:
-        return _parse_json_payload(payload_bytes, trapping_parameters)
+        return _parse_json_payload(
+            payload_bytes,
+            trapping_parameters,
+            selected_excitation_step,
+            collector_metadata,
+        )
 
 
 def _parse_json_payload(
-    payload_bytes: bytes, trapping_parameters: TrappingParameters
+    payload_bytes: bytes,
+    trapping_parameters: TrapControls,
+    selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse JSON-encoded MQTT payload.
@@ -167,6 +177,9 @@ def _parse_json_payload(
 
     Args:
         payload_bytes: UTF-8 encoded JSON payload
+        trapping_parameters: TrapControls with basic controls and excitation steps
+        selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -270,13 +283,18 @@ def _parse_json_payload(
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
+            selected_excitation_step=selected_excitation_step,
+            collector_metadata=collector_metadata,
         )
     except ValueError as e:
         raise PayloadParseError(f"Failed to create WaveformData: {e}")
 
 
 def _parse_binary_payload(
-    payload_bytes: bytes, trapping_parameters: TrappingParameters
+    payload_bytes: bytes,
+    trapping_parameters: TrapControls,
+    selected_excitation_step: int = 0,
+    collector_metadata: Optional[str] = None,
 ) -> WaveformData:
     """
     Parse binary-encoded MQTT payload.
@@ -298,6 +316,9 @@ def _parse_binary_payload(
 
     Args:
         payload_bytes: Binary encoded payload
+        trapping_parameters: TrapControls with basic controls and excitation steps
+        selected_excitation_step: Index of the excitation step to use (default: 0)
+        collector_metadata: Optional JSON metadata from collector parameters topic
 
     Returns:
         WaveformData: Parsed waveform data
@@ -377,6 +398,8 @@ def _parse_binary_payload(
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
+            selected_excitation_step=selected_excitation_step,
+            collector_metadata=collector_metadata,
         )
 
     except struct.error as e:
