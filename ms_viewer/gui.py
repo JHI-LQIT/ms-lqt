@@ -1382,63 +1382,7 @@ class MainWindow(QMainWindow):
 
         self.plot_widget.setTitle(title)
 
-    def _average_waveforms(self, waveforms: List[WaveformData]) -> WaveformData:
-        """
-        Average multiple waveforms together.
-
-        Args:
-            waveforms: List of WaveformData objects to average
-
-        Returns:
-            Averaged WaveformData
-        """
-        if not waveforms:
-            raise ValueError("Cannot average empty waveform list")
-
-        if len(waveforms) == 1:
-            return waveforms[0]
-
-        # Use first waveform as template
-        first = waveforms[0]
-
-        # Validate that all waveforms have compatible dimensions
-        for wf in waveforms[1:]:
-            # Check if channel sets match
-            if set(wf.channels.keys()) != set(first.channels.keys()):
-                raise ValueError("Cannot average waveforms with different channel sets")
-
-            # Check if array shapes match for each channel
-            for ch_name in first.channels.keys():
-                if wf.channels[ch_name].shape != first.channels[ch_name].shape:
-                    raise ValueError(
-                        f"Cannot average waveforms: channel '{ch_name}' has "
-                        f"incompatible shapes ({first.channels[ch_name].shape} vs {wf.channels[ch_name].shape})"
-                    )
-
-        # Average channels
-        averaged_channels = {}
-        for ch_name in first.channels.keys():
-            # Collect all channel data
-            channel_data = []
-            for wf in waveforms:
-                if ch_name in wf.channels:
-                    channel_data.append(wf.channels[ch_name])
-
-            if channel_data:
-                # Average across all waveforms
-                averaged_channels[ch_name] = np.mean(channel_data, axis=0)
-
-        # Use latest timestamp
-        latest_timestamp = max(wf.timestamp for wf in waveforms)
-
-        return WaveformData(
-            t0=first.t0,
-            dt=first.dt,
-            channels=averaged_channels,
-            timestamp=latest_timestamp,
-            trapping_parameters=first.trapping_parameters,
-            selected_excitation_step=first.selected_excitation_step,
-        )
+    
 
     def _apply_mqtt_config_from_state(self):
         """Apply MQTT configuration from loaded state."""
