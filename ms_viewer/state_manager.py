@@ -81,7 +81,7 @@ def load_state(path: str) -> Dict[str, Any]:
             ],
         },
         "statistics": {
-            "plugin_directory": str(Path.home() / ".waveform_viewer" / "plugins"),
+            "plugin_directory": str(Path.home() / ".ms_viewer" / "plugins"),
             "enabled_plugins": [],  # List of plugin names (without .py) to load
             "builtin_statistics": [  # List of built-in statistics to calculate
                 "mean",
