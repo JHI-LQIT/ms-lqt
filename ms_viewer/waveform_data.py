@@ -137,6 +137,8 @@ class WaveformData:
         end_idx = int(np.floor(end_time_ms / (1000.0 * dt)))
         if end_idx > N:
             end_idx = N
+        if start_idx > end_idx:
+            start_idx = end_idx
         n_samples = end_idx - start_idx
 
         # Get frequency values

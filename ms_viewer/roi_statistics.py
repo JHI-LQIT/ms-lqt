@@ -457,6 +457,12 @@ class ROIStatisticsCalculator:
                 f"ROI start m/z ({roi.start_mz}) must be less than end m/z ({roi.end_mz})"
             )
 
+        if len(waveform.mz) == 0:
+            logger.warning(
+                f"Waveform has no m/z data points; skipping ROI '{roi.name}'"
+            )
+            return []
+
         # Find indices for the ROI
         start_idx = np.searchsorted(waveform.mz, roi.start_mz)
         end_idx = np.searchsorted(waveform.mz, roi.end_mz)
