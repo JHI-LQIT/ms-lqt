@@ -72,7 +72,7 @@ class PeakArea(CustomStatisticPlugin):
         background = np.polyval(coeffs, times)
 
         # Subtract background from amplitudes
-        corrected_amplitudes = np.abs(amplitudes - background)
+        corrected_amplitudes = amplitudes - background
 
         # Calculate area under the peak using trapezoidal integration
         area = np.trapezoid(corrected_amplitudes, times)
