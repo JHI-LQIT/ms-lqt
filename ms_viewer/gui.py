@@ -15,36 +15,19 @@ import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import Qt as QtCore
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import (
-    QButtonGroup,
-    QCheckBox,
-    QDialog,
-    QDoubleSpinBox,
-    QFileDialog,
-    QGroupBox,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QRadioButton,
-    QScrollArea,
-    QSpinBox,
-    QSplitter,
-    QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QDoubleSpinBox,
+                             QFileDialog, QGroupBox, QHBoxLayout, QHeaderView,
+                             QLabel, QLineEdit, QMainWindow, QMessageBox,
+                             QPushButton, QRadioButton, QScrollArea, QSpinBox,
+                             QSplitter, QStatusBar, QTableWidget,
+                             QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import state_manager
 from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
-from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
+from .roi_statistics import (ROIDefinition, ROIStatistics,
+                             ROIStatisticsCalculator)
 from .trapping_parameters import ExcitationStep, TrapControls
 
 logger = logging.getLogger(__name__)
@@ -322,13 +305,9 @@ class StatisticsWorker(QThread):
                 else:
                     scaled_channels[ch_name] = data
 
-            scaled_waveform = WaveformData(
-                t0=averaged_waveform.t0,
-                dt=averaged_waveform.dt,
+            scaled_waveform = WaveformData.from_preprocessed(
+                source=averaged_waveform,
                 channels=scaled_channels,
-                timestamp=averaged_waveform.timestamp,
-                trapping_parameters=averaged_waveform.trapping_parameters,
-                selected_excitation_step=averaged_waveform.selected_excitation_step,
             )
 
             if self._should_stop:
@@ -404,13 +383,10 @@ class StatisticsWorker(QThread):
         # Use latest timestamp
         latest_timestamp = max(wf.timestamp for wf in waveforms)
 
-        return WaveformData(
-            t0=first.t0,
-            dt=first.dt,
+        return WaveformData.from_preprocessed(
+            source=first,
             channels=averaged_channels,
             timestamp=latest_timestamp,
-            trapping_parameters=first.trapping_parameters,
-            selected_excitation_step=first.selected_excitation_step,
         )
 
 

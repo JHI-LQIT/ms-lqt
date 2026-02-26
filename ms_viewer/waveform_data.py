@@ -159,6 +159,43 @@ class WaveformData:
 
         return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
 
+    @classmethod
+    def from_preprocessed(
+        cls,
+        source: "WaveformData",
+        channels: Dict[str, np.ndarray],
+        timestamp=None,
+    ) -> "WaveformData":
+        """Create a WaveformData from pre-sliced channels, reusing the source m/z data.
+
+        Use this instead of the normal constructor when channels are already sliced
+        and sorted (e.g. after averaging or scaling).  Re-running the constructor on
+        already-sliced data re-applies ``calc_mz_values``, which computes a
+        ``start_idx`` relative to wall-clock time zero; for excitation steps beyond
+        the first that offset can exceed the (already short) channel length, resulting
+        in an empty m/z array and broken statistics.
+
+        Args:
+            source: The WaveformData whose m/z arrays and metadata should be reused.
+            channels: Pre-sliced and sorted channel arrays (same shape as source.channels).
+            timestamp: Optional override for the timestamp (defaults to source.timestamp).
+
+        Returns:
+            A new WaveformData with the given channels but the source's m/z data.
+        """
+        instance: "WaveformData" = object.__new__(cls)
+        instance.t0 = source.t0
+        instance.dt = source.dt
+        instance.channels = channels
+        instance.timestamp = timestamp if timestamp is not None else source.timestamp
+        instance.trapping_parameters = source.trapping_parameters
+        instance.selected_excitation_step = source.selected_excitation_step
+        instance.collector_metadata = source.collector_metadata
+        instance.mz = source.mz.copy()
+        instance.f_AC_kHz = source.f_AC_kHz.copy()
+        instance.rf_amp_V0p = source.rf_amp_V0p.copy()
+        return instance
+
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
         """Calculate m/z from RF amplitude and frequency."""
         return self._multiplier * rf_amp_V0p / f_AC_kHz
