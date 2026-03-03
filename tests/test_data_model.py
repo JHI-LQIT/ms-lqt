@@ -115,7 +115,6 @@ class TestParsePayloadJSON(unittest.TestCase):
         self.trap_controls.basic_controls.r0_cm = 0.5
         self.trap_controls.basic_controls.f_RF_MHz = 2.0
         self.trap_controls.basic_controls.injection_duration_ms = 1.0  # Short injection
-        self.trap_controls.excitation_steps[0].step_delay_ms = 0.0  # No delay
         self.trap_controls.excitation_steps[0].step_duration_ms = 10.0  # 10ms duration
         self.trap_controls.excitation_steps[0].rf_amplitude_begin_V0p = 100.0
         self.trap_controls.excitation_steps[0].frequency_begin_kHz = 50.0
@@ -289,7 +288,6 @@ class TestParsePayloadBinary(unittest.TestCase):
         self.trap_controls.basic_controls.r0_cm = 0.5
         self.trap_controls.basic_controls.f_RF_MHz = 2.0
         self.trap_controls.basic_controls.injection_duration_ms = 1.0  # Short injection
-        self.trap_controls.excitation_steps[0].step_delay_ms = 0.0  # No delay
         self.trap_controls.excitation_steps[0].step_duration_ms = 10.0  # 10ms duration
         self.trap_controls.excitation_steps[0].rf_amplitude_begin_V0p = 100.0
         self.trap_controls.excitation_steps[0].frequency_begin_kHz = 50.0
@@ -500,7 +498,6 @@ class TestEncodePayload(unittest.TestCase):
         self.trap_controls.basic_controls.r0_cm = 0.5
         self.trap_controls.basic_controls.f_RF_MHz = 2.0
         self.trap_controls.basic_controls.injection_duration_ms = 1.0  # Short injection
-        self.trap_controls.excitation_steps[0].step_delay_ms = 0.0  # No delay
         self.trap_controls.excitation_steps[0].step_duration_ms = 10.0  # 10ms duration
         self.trap_controls.excitation_steps[0].rf_amplitude_begin_V0p = 100.0
         self.trap_controls.excitation_steps[0].frequency_begin_kHz = 50.0
@@ -618,7 +615,6 @@ class TestParsePayloadEdgeCases(unittest.TestCase):
         """Set up test fixtures."""
         self.trap_controls = TrapControls()
         self.trap_controls.basic_controls.injection_duration_ms = 1.0
-        self.trap_controls.excitation_steps[0].step_delay_ms = 0.0
         self.trap_controls.excitation_steps[0].step_duration_ms = 10.0
 
     def test_parse_with_selected_excitation_step(self):
@@ -626,13 +622,11 @@ class TestParsePayloadEdgeCases(unittest.TestCase):
         self.trap_controls.basic_controls.injection_duration_ms = 1.0
         self.trap_controls.excitation_steps = [
             ExcitationStep(
-                step_delay_ms=0.0,
                 step_duration_ms=5.0,
                 frequency_begin_kHz=50.0,
                 rf_amplitude_begin_V0p=100.0,
             ),
             ExcitationStep(
-                step_delay_ms=0.0,
                 step_duration_ms=5.0,
                 frequency_begin_kHz=75.0,
                 rf_amplitude_begin_V0p=150.0,
