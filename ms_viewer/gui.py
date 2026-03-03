@@ -787,7 +787,6 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Set up the user interface."""
         self.setWindowTitle("MS LQIT")
-        self.setMinimumSize(1200, 700)
 
         # Central widget
         central_widget = QWidget()
