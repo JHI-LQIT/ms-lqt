@@ -690,5 +690,196 @@ class TestParsePayloadEdgeCases(unittest.TestCase):
         self.assertIsInstance(waveform, WaveformData)
 
 
+class TestCalcMzValuesTruncation(unittest.TestCase):
+    """Tests that calc_mz_values adjusts sweep end-values when the waveform is truncated."""
+
+    def _make_freq_sweep_trap(
+        self,
+        injection_ms: float,
+        step_duration_ms: float,
+        f_begin: float,
+        f_end: float,
+        rf_const: float = 100.0,
+        r0_cm: float = 0.5,
+        f_RF_MHz: float = 2.0,
+    ) -> TrapControls:
+        """Trap with a frequency sweep and constant RF (m/z is monotone in frequency)."""
+        tc = TrapControls()
+        tc.basic_controls.r0_cm = r0_cm
+        tc.basic_controls.f_RF_MHz = f_RF_MHz
+        tc.basic_controls.injection_duration_ms = injection_ms
+        step = tc.excitation_steps[0]
+        step.step_duration_ms = step_duration_ms
+        step.enable_frequency_sweep = True
+        step.frequency_begin_kHz = f_begin
+        step.frequency_end_kHz = f_end
+        step.enable_rf_amplitude_sweep = False
+        step.rf_amplitude_begin_V0p = rf_const
+        step.rf_amplitude_end_V0p = rf_const
+        return tc
+
+    def _make_rf_sweep_trap(
+        self,
+        injection_ms: float,
+        step_duration_ms: float,
+        rf_begin: float,
+        rf_end: float,
+        f_const: float = 75.0,
+        r0_cm: float = 0.5,
+        f_RF_MHz: float = 2.0,
+    ) -> TrapControls:
+        """Trap with an RF amplitude sweep and constant frequency (m/z is monotone in RF)."""
+        tc = TrapControls()
+        tc.basic_controls.r0_cm = r0_cm
+        tc.basic_controls.f_RF_MHz = f_RF_MHz
+        tc.basic_controls.injection_duration_ms = injection_ms
+        step = tc.excitation_steps[0]
+        step.step_duration_ms = step_duration_ms
+        step.enable_frequency_sweep = False
+        step.frequency_begin_kHz = f_const
+        step.frequency_end_kHz = f_const
+        step.enable_rf_amplitude_sweep = True
+        step.rf_amplitude_begin_V0p = rf_begin
+        step.rf_amplitude_end_V0p = rf_end
+        return tc
+
+    def test_full_waveform_uses_full_frequency_sweep_end(self):
+        """When the waveform covers the complete step, frequency sweep ends at configured value."""
+        # injection 0 ms, step 10 ms, dt=1e-6 s => 10000 samples for the step
+        tc = self._make_freq_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            f_begin=50.0,
+            f_end=100.0,
+        )
+        dt = 1e-6
+        N = 10000  # exactly covers the full 10 ms step
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        self.assertAlmostEqual(waveform.f_AC_kHz.max(), 100.0, places=6)
+        self.assertAlmostEqual(waveform.f_AC_kHz.min(), 50.0, places=6)
+
+    def test_full_waveform_uses_full_rf_sweep_end(self):
+        """When the waveform covers the complete step, RF sweep ends at configured value."""
+        tc = self._make_rf_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            rf_begin=100.0,
+            rf_end=200.0,
+        )
+        dt = 1e-6
+        N = 10000
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        self.assertAlmostEqual(waveform.rf_amp_V0p.max(), 200.0, places=6)
+        self.assertAlmostEqual(waveform.rf_amp_V0p.min(), 100.0, places=6)
+
+    def test_truncated_waveform_adjusts_frequency_end(self):
+        """When only half the step is present, frequency end is adjusted to the midpoint."""
+        # injection 0 ms, step 10 ms => expected 10000 samples at dt=1e-6
+        # supply only 5000 samples (half the step)
+        tc = self._make_freq_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            f_begin=50.0,
+            f_end=150.0,  # full range = 100 kHz; half = 100 kHz endpoint
+        )
+        dt = 1e-6
+        N = 5000  # only half the step length
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        # With only half the samples the sweep should stop at the midpoint (100.0 kHz)
+        self.assertAlmostEqual(waveform.f_AC_kHz.min(), 50.0, places=4)
+        self.assertAlmostEqual(waveform.f_AC_kHz.max(), 100.0, places=4)
+
+    def test_truncated_waveform_adjusts_rf_end(self):
+        """When only half the step is present, RF end is adjusted to the midpoint."""
+        tc = self._make_rf_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            rf_begin=100.0,
+            rf_end=300.0,  # full range = 200 V0p; half = 200 V0p endpoint
+        )
+        dt = 1e-6
+        N = 5000
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        self.assertAlmostEqual(waveform.rf_amp_V0p.min(), 100.0, places=4)
+        self.assertAlmostEqual(waveform.rf_amp_V0p.max(), 200.0, places=4)
+
+    def test_truncated_waveform_mz_length_matches_channel_length(self):
+        """m/z and channel arrays have the same length after truncation."""
+        tc = self._make_freq_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            f_begin=50.0,
+            f_end=100.0,
+        )
+        dt = 1e-6
+        N = 3000  # well short of the 10000 expected samples
+        channels = {"ch1": np.ones(N), "ch2": np.zeros(N)}
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels=channels,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        self.assertEqual(len(waveform.mz), N)
+        self.assertEqual(len(waveform.f_AC_kHz), N)
+        self.assertEqual(len(waveform.rf_amp_V0p), N)
+        self.assertEqual(len(waveform.channels["ch1"]), N)
+
+    def test_non_sweep_unchanged_when_truncated(self):
+        """Static (non-sweep) frequency and RF should remain constant even if truncated."""
+        tc = TrapControls()
+        tc.basic_controls.r0_cm = 0.5
+        tc.basic_controls.f_RF_MHz = 2.0
+        tc.basic_controls.injection_duration_ms = 0.0
+        tc.excitation_steps[0].step_duration_ms = 10.0
+        tc.excitation_steps[0].enable_frequency_sweep = False
+        tc.excitation_steps[0].frequency_begin_kHz = 75.0
+        tc.excitation_steps[0].enable_rf_amplitude_sweep = False
+        tc.excitation_steps[0].rf_amplitude_begin_V0p = 150.0
+
+        dt = 1e-6
+        N = 4000  # truncated
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+        np.testing.assert_array_equal(waveform.f_AC_kHz, np.full(N, 75.0))
+        np.testing.assert_array_equal(waveform.rf_amp_V0p, np.full(N, 150.0))
+
+
 if __name__ == "__main__":
     unittest.main()
