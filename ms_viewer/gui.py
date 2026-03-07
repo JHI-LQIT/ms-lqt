@@ -14,20 +14,40 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import Qt as QtCore
-from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QDoubleSpinBox,
-                             QFileDialog, QGroupBox, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QMainWindow, QMessageBox,
-                             QPushButton, QRadioButton, QScrollArea, QSpinBox,
-                             QSplitter, QStatusBar, QTableWidget,
-                             QTableWidgetItem, QVBoxLayout, QWidget)
+from PyQt5.QtCore import QByteArray, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtWidgets import (
+    QAction,
+    QButtonGroup,
+    QCheckBox,
+    QDialog,
+    QDockWidget,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import state_manager
 from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
-from .roi_statistics import (ROIDefinition, ROIStatistics,
-                             ROIStatisticsCalculator)
+from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
 from .trapping_parameters import ExcitationStep, TrapControls
 
 logger = logging.getLogger(__name__)
@@ -767,56 +787,107 @@ class MainWindow(QMainWindow):
         if self.state["gui"].get("splitter_sizes"):
             self.plots_splitter.setSizes(self.state["gui"]["splitter_sizes"])
 
+        # Restore dock/toolbar layout
+        if self.state["gui"].get("window_state"):
+            self.restoreState(
+                QByteArray.fromBase64(self.state["gui"]["window_state"].encode())
+            )
+
     def _setup_ui(self):
         """Set up the user interface."""
         self.setWindowTitle("MS LQIT")
-        self.setMinimumSize(1200, 700)
 
-        # Central widget
+        # Central widget: plots fill all available space
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-
-        # Main layout
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Top: Splitter with waveform plot and statistics plot side by side
+        # Plots take the entire central area
         self._setup_plots()
-        main_layout.addWidget(self.plots_splitter, stretch=10)
+        main_layout.addWidget(self.plots_splitter)
 
-        # Bottom: All controls in one compact row
-        controls_layout = QHBoxLayout()
+        # ── Toolbar: X-axis controls (always visible) ──────────────────────
+        toolbar = QToolBar("Main Controls")
+        toolbar.setObjectName("main_toolbar")
+        toolbar.setMovable(False)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)  # type: ignore[attr-defined]
 
-        # MQTT config button (opens dialog) and X-axis selection
-        mqtt_button_widget = QWidget()
-        mqtt_button_layout = QVBoxLayout(mqtt_button_widget)
-        mqtt_config_btn = QPushButton("MQTT Configuration...")
-        mqtt_config_btn.clicked.connect(self._open_mqtt_config_dialog)
-        mqtt_button_layout.addWidget(mqtt_config_btn)
-
-        # X-axis selection radio buttons
         self._setup_xaxis_controls()
-        mqtt_button_layout.addWidget(self.xaxis_group)
+        toolbar.addWidget(self.xaxis_group)
 
-        mqtt_button_layout.addStretch()
-        controls_layout.addWidget(mqtt_button_widget, stretch=1)
+        # ── View menu: toggle dock visibility ──────────────────────────────
+        _menu_bar = self.menuBar()
+        assert _menu_bar is not None
+        view_menu = _menu_bar.addMenu("View")
 
-        # Channel scaling controls
-        self._setup_scaling_controls()
-        controls_layout.addWidget(self.scaling_group, stretch=2)
+        # ── Dock widgets ───────────────────────────────────────────────────
 
-        # ROI table
-        self._setup_region_table()
-        controls_layout.addWidget(self.region_group, stretch=2)
+        # MQTT Configuration dock (right side by default)
+        mqtt_dock_widget = QWidget()
+        mqtt_dock_layout = QVBoxLayout(mqtt_dock_widget)
+        _mqtt_btn = QPushButton("MQTT Configuration...")
+        _mqtt_btn.clicked.connect(self._open_mqtt_config_dialog)
+        mqtt_dock_layout.addWidget(_mqtt_btn)
+        mqtt_dock_layout.addStretch()
+        self._mqtt_dock = QDockWidget("MQTT", self)
+        self._mqtt_dock.setObjectName("mqtt_dock")
+        self._mqtt_dock.setWidget(mqtt_dock_widget)
+        self._mqtt_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.RightDockWidgetArea, self._mqtt_dock)  # type: ignore[attr-defined]
+        view_menu.addAction(self._mqtt_dock.toggleViewAction())  # type: ignore[union-attr]
 
-        # Statistics table
-        self._setup_statistics_table()
-        controls_layout.addWidget(self.statistics_group, stretch=3)
-
-        # Action buttons
+        # Actions dock (tabbed with MQTT on the right)
         self._setup_action_buttons()
-        controls_layout.addWidget(self.action_group, stretch=1)
+        self._actions_dock = QDockWidget("Actions", self)
+        self._actions_dock.setObjectName("actions_dock")
+        self._actions_dock.setWidget(self.action_group)
+        self._actions_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.RightDockWidgetArea, self._actions_dock)  # type: ignore[attr-defined]
+        self.tabifyDockWidget(self._mqtt_dock, self._actions_dock)
+        view_menu.addAction(self._actions_dock.toggleViewAction())  # type: ignore[union-attr]
 
-        main_layout.addLayout(controls_layout, stretch=1)
+        # Metrics selector dock (right side, tabbed)
+        self._metrics_dock = QDockWidget("Select Metrics", self)
+        self._metrics_dock.setObjectName("metrics_dock")
+        self._metrics_dock.setWidget(self.stats_metrics_panel)
+        self._metrics_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.RightDockWidgetArea, self._metrics_dock)  # type: ignore[attr-defined]
+        self.tabifyDockWidget(self._actions_dock, self._metrics_dock)
+        view_menu.addAction(self._metrics_dock.toggleViewAction())  # type: ignore[union-attr]
+
+        # Channel Scaling dock (bottom)
+        self._setup_scaling_controls()
+        self._scaling_dock = QDockWidget("Channel Scaling", self)
+        self._scaling_dock.setObjectName("scaling_dock")
+        self._scaling_dock.setWidget(self.scaling_group)
+        self._scaling_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._scaling_dock)  # type: ignore[attr-defined]
+        view_menu.addAction(self._scaling_dock.toggleViewAction())  # type: ignore[union-attr]
+
+        # Regions of Interest dock (bottom, tabbed)
+        self._setup_region_table()
+        self._roi_dock = QDockWidget("Regions of Interest", self)
+        self._roi_dock.setObjectName("roi_dock")
+        self._roi_dock.setWidget(self.region_group)
+        self._roi_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._roi_dock)  # type: ignore[attr-defined]
+        self.tabifyDockWidget(self._scaling_dock, self._roi_dock)
+        view_menu.addAction(self._roi_dock.toggleViewAction())  # type: ignore[union-attr]
+
+        # ROI Statistics dock (bottom, tabbed)
+        self._setup_statistics_table()
+        self._stats_dock = QDockWidget("ROI Statistics", self)
+        self._stats_dock.setObjectName("stats_dock")
+        self._stats_dock.setWidget(self.statistics_group)
+        self._stats_dock.setAllowedAreas(Qt.AllDockWidgetAreas)  # type: ignore[attr-defined]
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._stats_dock)  # type: ignore[attr-defined]
+        self.tabifyDockWidget(self._roi_dock, self._stats_dock)
+        view_menu.addAction(self._stats_dock.toggleViewAction())  # type: ignore[union-attr]
+
+        # Raise the most-used tabs by default
+        self._roi_dock.raise_()
+        self._mqtt_dock.raise_()
 
         # Status bar
         self.status_bar = QStatusBar()
@@ -833,7 +904,7 @@ class MainWindow(QMainWindow):
 
         # Right: Statistics plot
         self._setup_statistics_plot()
-        self.plots_splitter.addWidget(self.stats_plot_widget)
+        self.plots_splitter.addWidget(self.stats_plot)
 
         # Set initial sizes (60% waveform, 40% statistics)
         self.plots_splitter.setSizes([600, 400])
@@ -861,12 +932,9 @@ class MainWindow(QMainWindow):
 
     def _setup_statistics_plot(self):
         """Set up the statistics plot with PyQtGraph."""
-        self.stats_plot_widget = QWidget()
-        layout = QVBoxLayout(self.stats_plot_widget)
-
-        # Control panel for selecting metrics
-        control_panel = QGroupBox("Select Metrics to Display")
-        control_layout = QVBoxLayout()
+        # Metrics selector panel – placed in its own dock by _setup_ui
+        self.stats_metrics_panel = QWidget()
+        metrics_layout = QVBoxLayout(self.stats_metrics_panel)
 
         # Scroll area for checkboxes
         scroll = QScrollArea()
@@ -880,17 +948,14 @@ class MainWindow(QMainWindow):
 
         self.stats_checkbox_layout.addStretch()
         scroll.setWidget(scroll_content)
-        control_layout.addWidget(scroll)
+        metrics_layout.addWidget(scroll)
 
         # Clear history button
         clear_btn = QPushButton("Clear History")
         clear_btn.clicked.connect(self._clear_statistics_history)
-        control_layout.addWidget(clear_btn)
+        metrics_layout.addWidget(clear_btn)
 
-        control_panel.setLayout(control_layout)
-        control_panel.setMaximumWidth(250)
-
-        # PyQtGraph plot widget
+        # PyQtGraph plot widget – used directly in the splitter
         self.stats_plot = pg.PlotWidget()
         self.stats_plot.setBackground("w")
         self.stats_plot.setLabel("left", "Value")
@@ -901,12 +966,6 @@ class MainWindow(QMainWindow):
 
         # Store plot curves for statistics
         self.stats_plot_curves = {}
-
-        # Layout
-        plot_layout = QHBoxLayout()
-        plot_layout.addWidget(control_panel)
-        plot_layout.addWidget(self.stats_plot, stretch=1)
-        layout.addLayout(plot_layout)
 
     def _setup_statistics_table(self):
         """Set up the statistics display table."""
@@ -1357,8 +1416,6 @@ class MainWindow(QMainWindow):
                 title = "No data received yet"
 
         self.plot_widget.setTitle(title)
-
-    
 
     def _apply_mqtt_config_from_state(self):
         """Apply MQTT configuration from loaded state."""
@@ -2816,6 +2873,11 @@ class MainWindow(QMainWindow):
 
         # Save channel scaling parameters
         self.state["channel_scaling"] = self.channel_scaling.copy()
+
+        # Save dock/toolbar layout
+        self.state["gui"]["window_state"] = bytes(
+            self.saveState().toBase64()
+        ).decode()
 
         # Save state to file
         state_manager.save_state(self.state_path, self.state)

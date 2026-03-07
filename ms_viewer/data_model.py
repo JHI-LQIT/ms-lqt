@@ -55,7 +55,6 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrapControls:
         "basic_controls": {
             "r0_cm": 0.475,
             "f_RF_MHz": 2.112,
-            "rf_amplitude_V0p": 0.0,
             "injection_duration_ms": 5.0,
             ...
         },
@@ -63,7 +62,6 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrapControls:
             {
                 "step_name": "Step1",
                 "step_active": true,
-                "step_delay_ms": 10.0,
                 "step_duration_ms": 20.0,
                 ...
             }
