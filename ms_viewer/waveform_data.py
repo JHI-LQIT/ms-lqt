@@ -142,33 +142,30 @@ class WaveformData:
             start_idx = end_idx
         n_samples = end_idx - start_idx
 
-        # Get frequency values
+        # Compute sweep fraction to handle truncated waveforms
+        sweep_fraction = (
+            n_samples / n_expected_samples if n_expected_samples > 0 else 1.0
+        )
+
+        # Get frequency values; adjust end value if waveform was truncated
         f_begin = excitation_step.frequency_begin_kHz
         if excitation_step.enable_frequency_sweep:
             ramp_type = getattr(excitation_step, "frequency_ramp_type", "linear")
             if ramp_type == "hyperbolic":
                 # tau(t) sweeps linearly from tau1 to tau_end,
                 # so f(t) = 1e3 / tau(t) [kHz] — linspace tau directly.
-                # tau (µs) = 1000 / f (kHz)
+                # tau (µs) = 1000 / f (kHz); adjust tau_end for truncation.
                 tau1 = 1000.0 / f_begin
                 tau_end = 1000.0 / excitation_step.frequency_end_kHz
-                tau = np.linspace(tau1, tau_end, n_samples)
+                tau_end_actual = tau1 + sweep_fraction * (tau_end - tau1)
+                tau = np.linspace(tau1, tau_end_actual, n_samples)
                 f_AC = 1e3 / tau  # kHz
             else:
-                # Linear ramp
-                f_AC = np.linspace(
-                    f_begin, excitation_step.frequency_end_kHz, n_samples
+                # Linear ramp; adjust end value if waveform was truncated
+                f_end = f_begin + sweep_fraction * (
+                    excitation_step.frequency_end_kHz - f_begin
                 )
-        else:
-            f_AC = np.full(n_samples, f_begin)
-
-        # Get frequency values; adjust end value if waveform was truncated
-        f_begin = excitation_step.frequency_begin_kHz
-        if excitation_step.enable_frequency_sweep:
-            f_end = f_begin + sweep_fraction * (
-                excitation_step.frequency_end_kHz - f_begin
-            )
-            f_AC = np.linspace(f_begin, f_end, n_samples)
+                f_AC = np.linspace(f_begin, f_end, n_samples)
         else:
             f_AC = np.full(n_samples, f_begin)
 
