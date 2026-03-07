@@ -399,6 +399,36 @@ class TestHyperbolicFrequencyRamp(unittest.TestCase):
         trap = TrapControls.from_dict(data)
         self.assertEqual(trap.excitation_steps[0].frequency_ramp_type, "linear")
 
+    def test_from_dict_ignores_unknown_excitation_step_fields(self):
+        """Unknown fields in excitation_steps must be silently ignored (forward-compat)."""
+        data = {
+            "basic_controls": {"r0_cm": 0.5, "f_RF_MHz": 2.0},
+            "excitation_steps": [
+                {
+                    "step_name": "future_step",
+                    "frequency_begin_kHz": 50.0,
+                    "use_mz_input": True,        # unknown field from newer firmware
+                    "some_future_field": 42.0,   # another unknown field
+                }
+            ],
+        }
+        trap = TrapControls.from_dict(data)
+        self.assertEqual(trap.excitation_steps[0].step_name, "future_step")
+        self.assertAlmostEqual(trap.excitation_steps[0].frequency_begin_kHz, 50.0)
+
+    def test_from_dict_ignores_unknown_basic_controls_fields(self):
+        """Unknown fields in basic_controls must be silently ignored (forward-compat)."""
+        data = {
+            "basic_controls": {
+                "r0_cm": 0.5,
+                "f_RF_MHz": 2.0,
+                "future_hardware_param": 99,  # unknown field from newer firmware
+            },
+            "excitation_steps": [],
+        }
+        trap = TrapControls.from_dict(data)
+        self.assertAlmostEqual(trap.basic_controls.r0_cm, 0.5)
+
     # ------------------------------------------------------------------
     # calculate_step_mz_range – endpoints are ramp-type-independent
     # ------------------------------------------------------------------

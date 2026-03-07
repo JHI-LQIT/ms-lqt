@@ -94,14 +94,20 @@ class TrapControls:
         """
         trap_controls = cls()
 
-        # Populate basic controls
-        if "basic_controls" in data and data["basic_controls"]:
-            trap_controls.basic_controls = BasicTrapControls(**data["basic_controls"])
+        # Known field names for each dataclass
+        basic_fields = set(BasicTrapControls.__dataclass_fields__)
+        excitation_fields = set(ExcitationStep.__dataclass_fields__)
 
-        # Populate excitation steps
+        # Populate basic controls (ignore unknown keys for forward compatibility)
+        if "basic_controls" in data and data["basic_controls"]:
+            filtered = {k: v for k, v in data["basic_controls"].items() if k in basic_fields}
+            trap_controls.basic_controls = BasicTrapControls(**filtered)
+
+        # Populate excitation steps (ignore unknown keys for forward compatibility)
         if "excitation_steps" in data and data["excitation_steps"]:
             trap_controls.excitation_steps = [
-                ExcitationStep(**step_data) for step_data in data["excitation_steps"]
+                ExcitationStep(**{k: v for k, v in step_data.items() if k in excitation_fields})
+                for step_data in data["excitation_steps"]
             ]
 
         return trap_controls
