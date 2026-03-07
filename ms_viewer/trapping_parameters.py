@@ -7,7 +7,6 @@ class ExcitationStep:
 
     step_name: str = ""
     step_active: bool = True
-    step_delay_ms: float = 0.0
     step_duration_ms: float = 100.0
 
     enable_frequency_sweep: bool = False
@@ -17,9 +16,6 @@ class ExcitationStep:
     enable_ac_amplitude_sweep: bool = False
     ac_amplitude_begin_mV: float = 0.0
     ac_amplitude_end_mV: float = 0.0
-
-    enable_ac_amplitude_soft_start: bool = False
-    ac_soft_start_duration_ms: float = 50.0
 
     enable_rf_amplitude_sweep: bool = False
     rf_amplitude_begin_V0p: float = 0.0
@@ -38,9 +34,6 @@ class BasicTrapControls:
     )
     f_RF_MHz: float = 2.112  # RF drive frequency in MHz
 
-    # RF parameters
-    rf_amplitude_V0p: float = 0.0
-
     # Injection parameters
     injection_duration_ms: float = 5.0
     injection_open_voltage_V: float = 0.0
@@ -48,7 +41,6 @@ class BasicTrapControls:
     injection_rf_amplitude_V: float = 0.0
 
     # Trapping parameters
-    trapping_duration_ms: float = 100.0
     trapping_rf_amplitude_V0p: float = 0.0
 
     # Extraction parameters
@@ -94,17 +86,21 @@ class TrapControls:
         """
         trap_controls = cls()
 
-        # Known field names for each dataclass
-        basic_fields = set(BasicTrapControls.__dataclass_fields__)
-        excitation_fields = set(ExcitationStep.__dataclass_fields__)
-
-        # Populate basic controls (ignore unknown keys for forward compatibility)
+        # Populate basic controls (filter unknown keys for forward/backward compat)
         if "basic_controls" in data and data["basic_controls"]:
-            filtered = {k: v for k, v in data["basic_controls"].items() if k in basic_fields}
+            basic_fields = {
+                f.name for f in BasicTrapControls.__dataclass_fields__.values()
+            }
+            filtered = {
+                k: v for k, v in data["basic_controls"].items() if k in basic_fields
+            }
             trap_controls.basic_controls = BasicTrapControls(**filtered)
 
-        # Populate excitation steps (ignore unknown keys for forward compatibility)
+        # Populate excitation steps (filter unknown keys for forward/backward compat)
         if "excitation_steps" in data and data["excitation_steps"]:
+            excitation_fields = {
+                f.name for f in ExcitationStep.__dataclass_fields__.values()
+            }
             trap_controls.excitation_steps = [
                 ExcitationStep(**{k: v for k, v in step_data.items() if k in excitation_fields})
                 for step_data in data["excitation_steps"]
@@ -197,38 +193,32 @@ class TrapControls:
         Returns:
             Start time of the step in milliseconds
         """
-        basic = self.basic_controls
-        start_time = basic.injection_duration_ms
+        start_time = self.basic_controls.injection_duration_ms
 
-        # Account for all steps before this one, regardless of active status
+        # Accumulate durations of all preceding steps (inactive steps still count)
         for i in range(step_index):
-            step = self.excitation_steps[i]
-            if i == 0:
-                start_time += step.step_delay_ms
-            start_time += step.step_duration_ms
-
-        if step_index > 0:
-            # For steps after the first, add their delay
-            start_time += self.excitation_steps[step_index].step_delay_ms
-        else:
-            # For the first step, add its delay
-            start_time += self.excitation_steps[0].step_delay_ms
+            start_time += self.excitation_steps[i].step_duration_ms
 
         return start_time
 
     def calculate_total_duration(self) -> float:
         """Calculate total duration of the trapping cycle.
 
+        Trapping end time is derived as:
+            t_trapping_end = injection_duration_ms + sum(step_duration_ms for all steps)
+
         Returns:
             Total duration in milliseconds
         """
         basic = self.basic_controls
 
-        total = (
-            basic.injection_duration_ms
-            + basic.trapping_duration_ms
-            + basic.extraction_duration_ms
-        )
+        total = basic.injection_duration_ms
+
+        # Trapping duration is the sum of all excitation step durations
+        for step in self.excitation_steps:
+            total += step.step_duration_ms
+
+        total += basic.extraction_duration_ms
 
         # Add RF off duration if enabled
         if basic.turn_off_rf_after_extraction:

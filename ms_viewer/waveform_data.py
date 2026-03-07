@@ -135,6 +135,7 @@ class WaveformData:
 
         start_idx = int(np.ceil(start_time_ms / (1000.0 * dt)))
         end_idx = int(np.floor(end_time_ms / (1000.0 * dt)))
+        n_expected_samples = max(0, end_idx - start_idx)
         if end_idx > N:
             end_idx = N
         if start_idx > end_idx:
@@ -161,13 +162,25 @@ class WaveformData:
         else:
             f_AC = np.full(n_samples, f_begin)
 
-        # Get RF amplitude values
+        # Get frequency values; adjust end value if waveform was truncated
+        f_begin = excitation_step.frequency_begin_kHz
+        if excitation_step.enable_frequency_sweep:
+            f_end = f_begin + sweep_fraction * (
+                excitation_step.frequency_end_kHz - f_begin
+            )
+            f_AC = np.linspace(f_begin, f_end, n_samples)
+        else:
+            f_AC = np.full(n_samples, f_begin)
+
+        # Get RF amplitude values; adjust end value if waveform was truncated
         rf_begin = excitation_step.rf_amplitude_begin_V0p
-        rf_amp = (
-            np.linspace(rf_begin, excitation_step.rf_amplitude_end_V0p, n_samples)
-            if excitation_step.enable_rf_amplitude_sweep
-            else np.full(n_samples, rf_begin)
-        )
+        if excitation_step.enable_rf_amplitude_sweep:
+            rf_end = rf_begin + sweep_fraction * (
+                excitation_step.rf_amplitude_end_V0p - rf_begin
+            )
+            rf_amp = np.linspace(rf_begin, rf_end, n_samples)
+        else:
+            rf_amp = np.full(n_samples, rf_begin)
 
         return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
 

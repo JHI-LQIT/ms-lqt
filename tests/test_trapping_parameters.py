@@ -25,9 +25,7 @@ class TestBasicTrapControls(unittest.TestCase):
 
         self.assertEqual(basic.r0_cm, 0.475)
         self.assertEqual(basic.f_RF_MHz, 2.112)
-        self.assertEqual(basic.rf_amplitude_V0p, 0.0)
         self.assertEqual(basic.injection_duration_ms, 5.0)
-        self.assertEqual(basic.trapping_duration_ms, 100.0)
         self.assertEqual(basic.extraction_duration_ms, 5.0)
         self.assertFalse(basic.enable_trapping)
         self.assertFalse(basic.turn_off_rf_after_extraction)
@@ -37,14 +35,12 @@ class TestBasicTrapControls(unittest.TestCase):
         basic = BasicTrapControls(
             r0_cm=0.5,
             f_RF_MHz=2.0,
-            rf_amplitude_V0p=100.0,
             enable_trapping=True,
             injection_duration_ms=10.0,
         )
 
         self.assertEqual(basic.r0_cm, 0.5)
         self.assertEqual(basic.f_RF_MHz, 2.0)
-        self.assertEqual(basic.rf_amplitude_V0p, 100.0)
         self.assertTrue(basic.enable_trapping)
         self.assertEqual(basic.injection_duration_ms, 10.0)
 
@@ -58,13 +54,11 @@ class TestExcitationStep(unittest.TestCase):
 
         self.assertEqual(step.step_name, "")
         self.assertTrue(step.step_active)
-        self.assertEqual(step.step_delay_ms, 0.0)
         self.assertEqual(step.step_duration_ms, 100.0)
         self.assertFalse(step.enable_frequency_sweep)
         self.assertEqual(step.frequency_begin_kHz, 50.0)
         self.assertEqual(step.frequency_end_kHz, 100.0)
         self.assertFalse(step.enable_ac_amplitude_sweep)
-        self.assertFalse(step.enable_ac_amplitude_soft_start)
         self.assertFalse(step.enable_rf_amplitude_sweep)
         self.assertEqual(step.frequency_ramp_type, "linear")
 
@@ -73,7 +67,6 @@ class TestExcitationStep(unittest.TestCase):
         step = ExcitationStep(
             step_name="Test Step",
             step_active=False,
-            step_delay_ms=10.0,
             step_duration_ms=200.0,
             enable_frequency_sweep=True,
             frequency_begin_kHz=100.0,
@@ -82,7 +75,6 @@ class TestExcitationStep(unittest.TestCase):
 
         self.assertEqual(step.step_name, "Test Step")
         self.assertFalse(step.step_active)
-        self.assertEqual(step.step_delay_ms, 10.0)
         self.assertEqual(step.step_duration_ms, 200.0)
         self.assertTrue(step.enable_frequency_sweep)
         self.assertEqual(step.frequency_begin_kHz, 100.0)
@@ -229,29 +221,29 @@ class TestTrapControls(unittest.TestCase):
         trap = TrapControls()
         trap.basic_controls.injection_duration_ms = 10.0
         trap.excitation_steps = [
-            ExcitationStep(step_delay_ms=5.0, step_duration_ms=100.0),
-            ExcitationStep(step_delay_ms=3.0, step_duration_ms=150.0),
-            ExcitationStep(step_delay_ms=2.0, step_duration_ms=200.0),
+            ExcitationStep(step_duration_ms=100.0),
+            ExcitationStep(step_duration_ms=150.0),
+            ExcitationStep(step_duration_ms=200.0),
         ]
 
-        # Step 0: injection_duration + step_delay
-        self.assertEqual(trap.calculate_step_start_time(0), 15.0)
+        # Step 0: starts right after injection
+        self.assertEqual(trap.calculate_step_start_time(0), 10.0)
 
-        # Step 1: injection + step0.delay + step0.duration + step1.delay
-        self.assertEqual(trap.calculate_step_start_time(1), 118.0)
+        # Step 1: injection + step0.duration
+        self.assertEqual(trap.calculate_step_start_time(1), 110.0)
 
-        # Step 2: injection + step0.delay + step0.duration + step1.duration + step2.delay
-        # = 10 + 5 + 100 + 150 + 2 = 267
-        self.assertEqual(trap.calculate_step_start_time(2), 267.0)
+        # Step 2: injection + step0.duration + step1.duration
+        # = 10 + 100 + 150 = 260
+        self.assertEqual(trap.calculate_step_start_time(2), 260.0)
 
     def test_calculate_total_duration(self):
         """Test calculation of total duration."""
         trap = TrapControls()
         trap.basic_controls.injection_duration_ms = 10.0
-        trap.basic_controls.trapping_duration_ms = 100.0
+        trap.excitation_steps = [ExcitationStep(step_duration_ms=100.0)]
         trap.basic_controls.extraction_duration_ms = 5.0
 
-        # Without RF off
+        # Without RF off: injection(10) + steps(100) + extraction(5) = 115
         total = trap.calculate_total_duration()
         self.assertEqual(total, 115.0)
 
