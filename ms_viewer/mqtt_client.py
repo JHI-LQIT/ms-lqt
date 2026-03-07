@@ -58,7 +58,7 @@ class MqttClient(QObject):
         super().__init__(parent)
 
         # Configuration
-        self.broker_host = "localhost"
+        self.broker_host = "174.30.54.32"
         self.broker_port = 1883
         self.input_topic = "lqt/picoscope/waveform"
         self.trapping_parameters_topic = "lqt/trapping/parameters"

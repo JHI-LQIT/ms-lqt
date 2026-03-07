@@ -25,6 +25,8 @@ class ExcitationStep:
     rf_amplitude_begin_V0p: float = 0.0
     rf_amplitude_end_V0p: float = 0.0
 
+    frequency_ramp_type: str = "linear"  # "linear" or "hyperbolic"
+
 
 @dataclass
 class BasicTrapControls:
@@ -233,6 +235,11 @@ class TrapControls:
 
         The m/z calculation uses the formula:
         m/z = 34.45 * V_RF / (r0^2 * f_RF * f_secular)
+
+        Returns the begin and end m/z values, which are determined by
+        ``frequency_begin_kHz`` and ``frequency_end_kHz`` respectively.
+        The ``frequency_ramp_type`` ("linear" or "hyperbolic") only affects
+        intermediate points and does not change the range endpoints.
 
         Args:
             step_index: Index of the excitation step

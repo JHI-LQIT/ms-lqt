@@ -143,11 +143,28 @@ class WaveformData:
 
         # Get frequency values
         f_begin = excitation_step.frequency_begin_kHz
-        f_AC = (
-            np.linspace(f_begin, excitation_step.frequency_end_kHz, n_samples)
-            if excitation_step.enable_frequency_sweep
-            else np.full(n_samples, f_begin)
-        )
+        if excitation_step.enable_frequency_sweep:
+            ramp_type = getattr(excitation_step, "frequency_ramp_type", "linear")
+            if ramp_type == "hyperbolic":
+                # Hyperbolic ramp: f(t) = 1e6 / (tau1 + psi * t_us)  [Hz]
+                # where tau1 (µs) = 1e6 / f_begin_Hz = 1000 / f_begin_kHz
+                #       tau_end   = 1000 / f_end_kHz
+                #       psi       = (tau_end - tau1) / duration_us
+                tau1 = 1000.0 / f_begin  # µs
+                tau_end = 1000.0 / excitation_step.frequency_end_kHz  # µs
+                duration_us = excitation_step.step_duration_ms * 1000.0
+                psi = (tau_end - tau1) / duration_us if duration_us > 0 else 0.0
+                t_us = np.linspace(0.0, duration_us, n_samples)
+                denominator = tau1 + psi * t_us
+                # Guard against division by zero
+                safe_denom = np.where(np.abs(denominator) > 1e-12, denominator, np.nan)
+                f_Hz = 1e6 / safe_denom
+                f_AC = f_Hz / 1000.0  # convert to kHz
+            else:
+                # Linear ramp
+                f_AC = np.linspace(f_begin, excitation_step.frequency_end_kHz, n_samples)
+        else:
+            f_AC = np.full(n_samples, f_begin)
 
         # Get RF amplitude values
         rf_begin = excitation_step.rf_amplitude_begin_V0p
