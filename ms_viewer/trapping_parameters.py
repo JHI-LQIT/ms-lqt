@@ -1,6 +1,35 @@
 from dataclasses import asdict, dataclass
 
 
+MZ_CALC_CONSTANT = 34.56340795456585
+
+
+def calculate_mz_multiplier(r0_cm: float, f_RF_MHz: float) -> float:
+    """Return multiplier used in m/z conversion formula.
+
+    The formula is:
+        m/z = multiplier * V_RF / f_secular
+    where:
+        multiplier = MZ_CALC_CONSTANT / (r0^2 * f_RF)
+    """
+    return MZ_CALC_CONSTANT / (r0_cm**2 * f_RF_MHz)
+
+
+def calculate_mz_from_rf_and_freq(multiplier, rf_amp_V0p, f_AC_kHz):
+    """Calculate m/z from RF amplitude and secular frequency."""
+    return multiplier * rf_amp_V0p / f_AC_kHz
+
+
+def calculate_freq_from_mz_and_rf(multiplier, mz, rf_amp_V0p):
+    """Calculate secular frequency from m/z and RF amplitude."""
+    return multiplier * rf_amp_V0p / mz
+
+
+def calculate_rf_from_mz_and_freq(multiplier, mz, f_AC_kHz):
+    """Calculate RF amplitude from m/z and secular frequency."""
+    return mz * f_AC_kHz / multiplier
+
+
 @dataclass
 class ExcitationStep:
     """Data structure for a single excitation step in a frequency sweep."""
@@ -102,7 +131,9 @@ class TrapControls:
                 f.name for f in ExcitationStep.__dataclass_fields__.values()
             }
             trap_controls.excitation_steps = [
-                ExcitationStep(**{k: v for k, v in step_data.items() if k in excitation_fields})
+                ExcitationStep(
+                    **{k: v for k, v in step_data.items() if k in excitation_fields}
+                )
                 for step_data in data["excitation_steps"]
             ]
 
@@ -230,7 +261,7 @@ class TrapControls:
         """Calculate m/z range for a given excitation step.
 
         The m/z calculation uses the formula:
-        m/z = 34.45 * V_RF / (r0^2 * f_RF * f_secular)
+        m/z = MZ_CALC_CONSTANT * V_RF / (r0^2 * f_RF * f_secular)
 
         Returns the begin and end m/z values, which are determined by
         ``frequency_begin_kHz`` and ``frequency_end_kHz`` respectively.
@@ -269,9 +300,9 @@ class TrapControls:
         if r0_cm <= 0 or f_RF_MHz <= 0 or freq_begin <= 0 or freq_end <= 0:
             return None
 
-        # Calculate m/z values using the formula: m/z = 34.45 * V_RF / (r0^2 * f_RF * f_secular)
-        mz_begin = 34.45 * rf_begin / (r0_cm**2 * f_RF_MHz * freq_begin)
-        mz_end = 34.45 * rf_end / (r0_cm**2 * f_RF_MHz * freq_end)
+        multiplier = calculate_mz_multiplier(r0_cm, f_RF_MHz)
+        mz_begin = multiplier * rf_begin / freq_begin
+        mz_end = multiplier * rf_end / freq_end
 
         return (mz_begin, mz_end)
 

@@ -3,7 +3,13 @@ from typing import Dict
 
 import numpy as np
 
-from .trapping_parameters import TrapControls
+from .trapping_parameters import (
+    TrapControls,
+    calculate_freq_from_mz_and_rf,
+    calculate_mz_from_rf_and_freq,
+    calculate_mz_multiplier,
+    calculate_rf_from_mz_and_freq,
+)
 
 
 class WaveformData:
@@ -96,11 +102,11 @@ class WaveformData:
         """Calculate the m/z conversion multiplier from trap parameters.
 
         The multiplier is used in the formula: m/z = multiplier * V_RF / f_secular
-        where multiplier = 34.45 / (r0^2 * f_RF)
+        where multiplier = MZ_CALC_CONSTANT / (r0^2 * f_RF)
         """
-        return 34.45 / (
-            self.trapping_parameters.basic_controls.r0_cm**2
-            * self.trapping_parameters.basic_controls.f_RF_MHz
+        return calculate_mz_multiplier(
+            self.trapping_parameters.basic_controls.r0_cm,
+            self.trapping_parameters.basic_controls.f_RF_MHz,
         )
 
     def calc_mz_values(
@@ -179,7 +185,13 @@ class WaveformData:
         else:
             rf_amp = np.full(n_samples, rf_begin)
 
-        return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
+        return (
+            calculate_mz_from_rf_and_freq(self._multiplier, rf_amp, f_AC),
+            f_AC,
+            rf_amp,
+            start_idx,
+            n_samples,
+        )
 
     @classmethod
     def from_preprocessed(
@@ -220,12 +232,12 @@ class WaveformData:
 
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
         """Calculate m/z from RF amplitude and frequency."""
-        return self._multiplier * rf_amp_V0p / f_AC_kHz
+        return calculate_mz_from_rf_and_freq(self._multiplier, rf_amp_V0p, f_AC_kHz)
 
     def freq_from_mz_and_rf(self, mz: float, rf_amp_V0p: float) -> float:
         """Calculate frequency from m/z and RF amplitude."""
-        return self._multiplier * rf_amp_V0p / mz
+        return calculate_freq_from_mz_and_rf(self._multiplier, mz, rf_amp_V0p)
 
     def rf_from_mz_and_freq(self, mz: float, f_AC_kHz: float) -> float:
         """Calculate RF amplitude from m/z and frequency."""
-        return mz * f_AC_kHz / self._multiplier
+        return calculate_rf_from_mz_and_freq(self._multiplier, mz, f_AC_kHz)

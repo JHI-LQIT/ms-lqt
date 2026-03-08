@@ -12,6 +12,7 @@ import unittest
 from ms_viewer.trapping_parameters import (
     BasicTrapControls,
     ExcitationStep,
+    MZ_CALC_CONSTANT,
     TrapControls,
 )
 
@@ -264,9 +265,8 @@ class TestTrapControls(unittest.TestCase):
         mz_range = trap.calculate_step_mz_range(0)
 
         self.assertIsNotNone(mz_range)
-        # m/z = 34.45 * V_RF / (r0^2 * f_RF * f_secular)
-        # m/z = 34.45 * 100 / (0.5^2 * 2.0 * 50.0) = 3445 / 50 = 68.9
-        expected_mz = 34.45 * 100.0 / (0.5**2 * 2.0 * 50.0)
+        # m/z = 34.56340795456585 * V_RF / (r0^2 * f_RF * f_secular)
+        expected_mz = MZ_CALC_CONSTANT * 100.0 / (0.5**2 * 2.0 * 50.0)
         self.assertAlmostEqual(mz_range[0], expected_mz, places=5)  # type: ignore
         self.assertAlmostEqual(mz_range[1], expected_mz, places=5)  # type: ignore
 
@@ -287,10 +287,10 @@ class TestTrapControls(unittest.TestCase):
         mz_range = trap.calculate_step_mz_range(0)
 
         self.assertIsNotNone(mz_range)
-        # m/z_begin = 34.45 * 100 / (0.5^2 * 2.0 * 50.0)
-        expected_mz_begin = 34.45 * 100.0 / (0.5**2 * 2.0 * 50.0)
-        # m/z_end = 34.45 * 200 / (0.5^2 * 2.0 * 100.0)
-        expected_mz_end = 34.45 * 200.0 / (0.5**2 * 2.0 * 100.0)
+        # m/z_begin = MZ_CALC_CONSTANT * 100 / (0.5^2 * 2.0 * 50.0)
+        expected_mz_begin = MZ_CALC_CONSTANT * 100.0 / (0.5**2 * 2.0 * 50.0)
+        # m/z_end = MZ_CALC_CONSTANT * 200 / (0.5^2 * 2.0 * 100.0)
+        expected_mz_end = MZ_CALC_CONSTANT * 200.0 / (0.5**2 * 2.0 * 100.0)
 
         self.assertAlmostEqual(mz_range[0], expected_mz_begin, places=5)  # type: ignore
         self.assertAlmostEqual(mz_range[1], expected_mz_end, places=5)  # type: ignore
@@ -378,9 +378,7 @@ class TestHyperbolicFrequencyRamp(unittest.TestCase):
         original.excitation_steps[0].frequency_ramp_type = "hyperbolic"
 
         restored = TrapControls.from_dict(original.to_dict())
-        self.assertEqual(
-            restored.excitation_steps[0].frequency_ramp_type, "hyperbolic"
-        )
+        self.assertEqual(restored.excitation_steps[0].frequency_ramp_type, "hyperbolic")
 
     def test_frequency_ramp_type_missing_in_old_dict_defaults_to_linear(self):
         """Dicts without frequency_ramp_type key (legacy) must default to 'linear'."""
@@ -399,8 +397,8 @@ class TestHyperbolicFrequencyRamp(unittest.TestCase):
                 {
                     "step_name": "future_step",
                     "frequency_begin_kHz": 50.0,
-                    "use_mz_input": True,        # unknown field from newer firmware
-                    "some_future_field": 42.0,   # another unknown field
+                    "use_mz_input": True,  # unknown field from newer firmware
+                    "some_future_field": 42.0,  # another unknown field
                 }
             ],
         }
