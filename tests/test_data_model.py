@@ -608,6 +608,138 @@ class TestEncodePayload(unittest.TestCase):
         self.assertEqual(payload1, payload2)
 
 
+class TestHyperbolicRampCalcMzValues(unittest.TestCase):
+    """Tests for calc_mz_values with hyperbolic frequency ramp."""
+
+    def _make_trap(
+        self,
+        f_begin_kHz: float = 50.0,
+        f_end_kHz: float = 100.0,
+        ramp_type: str = "hyperbolic",
+        rf_begin: float = 100.0,
+        duration_ms: float = 10.0,
+        injection_ms: float = 1.0,
+    ) -> TrapControls:
+        trap = TrapControls()
+        trap.basic_controls.r0_cm = 0.5
+        trap.basic_controls.f_RF_MHz = 2.0
+        trap.basic_controls.injection_duration_ms = injection_ms
+        step = trap.excitation_steps[0]
+        step.step_delay_ms = 0.0
+        step.step_duration_ms = duration_ms
+        step.enable_frequency_sweep = True
+        step.frequency_begin_kHz = f_begin_kHz
+        step.frequency_end_kHz = f_end_kHz
+        step.frequency_ramp_type = ramp_type
+        step.rf_amplitude_begin_V0p = rf_begin
+        return trap
+
+    def _make_waveform(self, trap: TrapControls, n: int = 15000) -> WaveformData:
+        return WaveformData(
+            t0=0.0,
+            dt=1e-6,
+            channels={"ch1": np.ones(n)},
+            timestamp=datetime(2026, 3, 7, tzinfo=timezone.utc),
+            trapping_parameters=trap,
+            selected_excitation_step=0,
+        )
+
+    # ------------------------------------------------------------------
+    # Basic shape / finiteness
+    # ------------------------------------------------------------------
+
+    def test_hyperbolic_ramp_produces_finite_mz(self):
+        """All m/z values from a hyperbolic sweep must be finite."""
+        trap = self._make_trap()
+        wf = self._make_waveform(trap)
+        self.assertTrue(np.all(np.isfinite(wf.mz)))
+        self.assertGreater(len(wf.mz), 0)
+
+    def test_hyperbolic_ramp_mz_length_matches_linear(self):
+        """Hyperbolic and linear sweeps over the same window must give same sample count."""
+        trap_hyp = self._make_trap(ramp_type="hyperbolic")
+        trap_lin = self._make_trap(ramp_type="linear")
+        wf_hyp = self._make_waveform(trap_hyp)
+        wf_lin = self._make_waveform(trap_lin)
+        self.assertEqual(len(wf_hyp.mz), len(wf_lin.mz))
+
+    # ------------------------------------------------------------------
+    # Endpoint accuracy: hyperbolic ramp should begin at f_begin and end at f_end
+    # ------------------------------------------------------------------
+
+    def test_hyperbolic_ramp_f_begin_is_correct(self):
+        """After sorting by m/z the frequency extremes must equal f_begin and f_end."""
+        f_begin = 50.0
+        f_end = 100.0
+        trap = self._make_trap(f_begin_kHz=f_begin, f_end_kHz=f_end)
+        wf = self._make_waveform(trap)
+
+        # f_AC_kHz is sorted by m/z; min freq → max m/z, max freq → min m/z
+        self.assertAlmostEqual(wf.f_AC_kHz.min(), f_begin, places=3)
+        self.assertAlmostEqual(wf.f_AC_kHz.max(), f_end, places=3)
+
+    def test_hyperbolic_ramp_f_end_decreasing(self):
+        """High-to-low frequency sweep (positive psi) must also hit both endpoints."""
+        f_begin = 100.0
+        f_end = 50.0
+        trap = self._make_trap(f_begin_kHz=f_begin, f_end_kHz=f_end)
+        wf = self._make_waveform(trap)
+
+        self.assertAlmostEqual(wf.f_AC_kHz.min(), f_end, places=3)
+        self.assertAlmostEqual(wf.f_AC_kHz.max(), f_begin, places=3)
+
+    # ------------------------------------------------------------------
+    # Comparison: hyperbolic vs linear should have identical endpoints but
+    # different intermediate distributions.
+    # ------------------------------------------------------------------
+
+    def test_hyperbolic_intermediate_differs_from_linear(self):
+        """Intermediate frequency values must differ between linear and hyperbolic ramps."""
+        trap_hyp = self._make_trap(ramp_type="hyperbolic")
+        trap_lin = self._make_trap(ramp_type="linear")
+        wf_hyp = self._make_waveform(trap_hyp)
+        wf_lin = self._make_waveform(trap_lin)
+
+        # The sorted arrays will have identical extremes (both start/end with same freqs)
+        # but different interior values
+        mid = len(wf_hyp.f_AC_kHz) // 2
+        self.assertFalse(
+            np.allclose(wf_hyp.f_AC_kHz[mid], wf_lin.f_AC_kHz[mid]),
+            msg="Hyperbolic mid-point frequency must differ from linear mid-point.",
+        )
+
+    def test_hyperbolic_mz_endpoints_match_linear(self):
+        """m/z range endpoints must be the same for both ramp types."""
+        trap_hyp = self._make_trap(ramp_type="hyperbolic")
+        trap_lin = self._make_trap(ramp_type="linear")
+        wf_hyp = self._make_waveform(trap_hyp)
+        wf_lin = self._make_waveform(trap_lin)
+
+        self.assertAlmostEqual(wf_hyp.mz.min(), wf_lin.mz.min(), places=4)
+        self.assertAlmostEqual(wf_hyp.mz.max(), wf_lin.mz.max(), places=4)
+
+    # ------------------------------------------------------------------
+    # m/z spacing: hyperbolic ramp should produce more uniform m/z steps
+    # than a linear frequency ramp when comparing the standard deviation of diffs
+    # ------------------------------------------------------------------
+
+    def test_hyperbolic_ramp_more_uniform_mz_spacing(self):
+        """Hyperbolic ramp must produce more uniform m/z spacing than linear."""
+        trap_hyp = self._make_trap(ramp_type="hyperbolic")
+        trap_lin = self._make_trap(ramp_type="linear")
+        wf_hyp = self._make_waveform(trap_hyp)
+        wf_lin = self._make_waveform(trap_lin)
+
+        # std-dev of consecutive m/z differences - lower means more uniform
+        std_hyp = float(np.std(np.diff(wf_hyp.mz)))
+        std_lin = float(np.std(np.diff(wf_lin.mz)))
+        self.assertLess(
+            std_hyp,
+            std_lin,
+            msg="Hyperbolic ramp should give more uniform m/z spacing than linear.",
+        )
+
+
 class TestParsePayloadEdgeCases(unittest.TestCase):
     """Test edge cases for parse_payload."""
 

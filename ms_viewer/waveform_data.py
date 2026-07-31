@@ -3,7 +3,13 @@ from typing import Dict
 
 import numpy as np
 
-from .trapping_parameters import TrapControls
+from .trapping_parameters import (
+    TrapControls,
+    calculate_freq_from_mz_and_rf,
+    calculate_mz_from_rf_and_freq,
+    calculate_mz_multiplier,
+    calculate_rf_from_mz_and_freq,
+)
 
 
 class WaveformData:
@@ -96,11 +102,11 @@ class WaveformData:
         """Calculate the m/z conversion multiplier from trap parameters.
 
         The multiplier is used in the formula: m/z = multiplier * V_RF / f_secular
-        where multiplier = 34.45 / (r0^2 * f_RF)
+        where multiplier = MZ_CALC_CONSTANT / (r0^2 * f_RF)
         """
-        return 34.45 / (
-            self.trapping_parameters.basic_controls.r0_cm**2
-            * self.trapping_parameters.basic_controls.f_RF_MHz
+        return calculate_mz_multiplier(
+            self.trapping_parameters.basic_controls.r0_cm,
+            self.trapping_parameters.basic_controls.f_RF_MHz,
         )
 
     def calc_mz_values(
@@ -142,7 +148,7 @@ class WaveformData:
             start_idx = end_idx
         n_samples = end_idx - start_idx
 
-        # Fraction of the sweep that is actually covered by the (possibly truncated) waveform
+        # Compute sweep fraction to handle truncated waveforms
         sweep_fraction = (
             n_samples / n_expected_samples if n_expected_samples > 0 else 1.0
         )
@@ -150,10 +156,22 @@ class WaveformData:
         # Get frequency values; adjust end value if waveform was truncated
         f_begin = excitation_step.frequency_begin_kHz
         if excitation_step.enable_frequency_sweep:
-            f_end = f_begin + sweep_fraction * (
-                excitation_step.frequency_end_kHz - f_begin
-            )
-            f_AC = np.linspace(f_begin, f_end, n_samples)
+            ramp_type = getattr(excitation_step, "frequency_ramp_type", "linear")
+            if ramp_type == "hyperbolic":
+                # tau(t) sweeps linearly from tau1 to tau_end,
+                # so f(t) = 1e3 / tau(t) [kHz] — linspace tau directly.
+                # tau (µs) = 1000 / f (kHz); adjust tau_end for truncation.
+                tau1 = 1000.0 / f_begin
+                tau_end = 1000.0 / excitation_step.frequency_end_kHz
+                tau_end_actual = tau1 + sweep_fraction * (tau_end - tau1)
+                tau = np.linspace(tau1, tau_end_actual, n_samples)
+                f_AC = 1e3 / tau  # kHz
+            else:
+                # Linear ramp; adjust end value if waveform was truncated
+                f_end = f_begin + sweep_fraction * (
+                    excitation_step.frequency_end_kHz - f_begin
+                )
+                f_AC = np.linspace(f_begin, f_end, n_samples)
         else:
             f_AC = np.full(n_samples, f_begin)
 
@@ -167,7 +185,13 @@ class WaveformData:
         else:
             rf_amp = np.full(n_samples, rf_begin)
 
-        return self._multiplier * rf_amp / f_AC, f_AC, rf_amp, start_idx, n_samples
+        return (
+            calculate_mz_from_rf_and_freq(self._multiplier, rf_amp, f_AC),
+            f_AC,
+            rf_amp,
+            start_idx,
+            n_samples,
+        )
 
     @classmethod
     def from_preprocessed(
@@ -208,12 +232,12 @@ class WaveformData:
 
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:
         """Calculate m/z from RF amplitude and frequency."""
-        return self._multiplier * rf_amp_V0p / f_AC_kHz
+        return calculate_mz_from_rf_and_freq(self._multiplier, rf_amp_V0p, f_AC_kHz)
 
     def freq_from_mz_and_rf(self, mz: float, rf_amp_V0p: float) -> float:
         """Calculate frequency from m/z and RF amplitude."""
-        return self._multiplier * rf_amp_V0p / mz
+        return calculate_freq_from_mz_and_rf(self._multiplier, mz, rf_amp_V0p)
 
     def rf_from_mz_and_freq(self, mz: float, f_AC_kHz: float) -> float:
         """Calculate RF amplitude from m/z and frequency."""
-        return mz * f_AC_kHz / self._multiplier
+        return calculate_rf_from_mz_and_freq(self._multiplier, mz, f_AC_kHz)

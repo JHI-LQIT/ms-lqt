@@ -43,6 +43,7 @@ class MqttClient(QObject):
     """
 
     # Qt signals
+    raw_waveform_received = pyqtSignal(bytes)  # Original PicoScope MQTT payload
     waveform_received = pyqtSignal(object)  # WaveformData
     trapping_parameters_received = pyqtSignal(object)  # TrapControls
     connection_state_changed = pyqtSignal(bool, str)  # connected, message
@@ -322,6 +323,10 @@ class MqttClient(QObject):
         or error_occurred signal on failure.
         """
         if message.topic == self.input_topic:
+            # Forwarding must not depend on local trapping parameters or the
+            # selected GUI step. Consumers can parse the original payload with
+            # their own, synchronized experiment parameters.
+            self.raw_waveform_received.emit(bytes(message.payload))
             try:
                 # Parse the payload
                 if not self.trapping_parameters:

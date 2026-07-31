@@ -12,6 +12,7 @@ import unittest
 from ms_viewer.trapping_parameters import (
     BasicTrapControls,
     ExcitationStep,
+    MZ_CALC_CONSTANT,
     TrapControls,
 )
 
@@ -60,6 +61,7 @@ class TestExcitationStep(unittest.TestCase):
         self.assertEqual(step.frequency_end_kHz, 100.0)
         self.assertFalse(step.enable_ac_amplitude_sweep)
         self.assertFalse(step.enable_rf_amplitude_sweep)
+        self.assertEqual(step.frequency_ramp_type, "linear")
 
     def test_custom_initialization(self):
         """Test custom initialization with specific values."""
@@ -263,9 +265,8 @@ class TestTrapControls(unittest.TestCase):
         mz_range = trap.calculate_step_mz_range(0)
 
         self.assertIsNotNone(mz_range)
-        # m/z = 34.45 * V_RF / (r0^2 * f_RF * f_secular)
-        # m/z = 34.45 * 100 / (0.5^2 * 2.0 * 50.0) = 3445 / 50 = 68.9
-        expected_mz = 34.45 * 100.0 / (0.5**2 * 2.0 * 50.0)
+        # m/z = 34.56340795456585 * V_RF / (r0^2 * f_RF * f_secular)
+        expected_mz = MZ_CALC_CONSTANT * 100.0 / (0.5**2 * 2.0 * 50.0)
         self.assertAlmostEqual(mz_range[0], expected_mz, places=5)  # type: ignore
         self.assertAlmostEqual(mz_range[1], expected_mz, places=5)  # type: ignore
 
@@ -286,10 +287,10 @@ class TestTrapControls(unittest.TestCase):
         mz_range = trap.calculate_step_mz_range(0)
 
         self.assertIsNotNone(mz_range)
-        # m/z_begin = 34.45 * 100 / (0.5^2 * 2.0 * 50.0)
-        expected_mz_begin = 34.45 * 100.0 / (0.5**2 * 2.0 * 50.0)
-        # m/z_end = 34.45 * 200 / (0.5^2 * 2.0 * 100.0)
-        expected_mz_end = 34.45 * 200.0 / (0.5**2 * 2.0 * 100.0)
+        # m/z_begin = MZ_CALC_CONSTANT * 100 / (0.5^2 * 2.0 * 50.0)
+        expected_mz_begin = MZ_CALC_CONSTANT * 100.0 / (0.5**2 * 2.0 * 50.0)
+        # m/z_end = MZ_CALC_CONSTANT * 200 / (0.5^2 * 2.0 * 100.0)
+        expected_mz_end = MZ_CALC_CONSTANT * 200.0 / (0.5**2 * 2.0 * 100.0)
 
         self.assertAlmostEqual(mz_range[0], expected_mz_begin, places=5)  # type: ignore
         self.assertAlmostEqual(mz_range[1], expected_mz_end, places=5)  # type: ignore
@@ -329,6 +330,166 @@ class TestTrapControls(unittest.TestCase):
         # Negative r0
         trap.basic_controls.r0_cm = -0.5
         self.assertIsNone(trap.calculate_step_mz_range(0))
+
+
+class TestHyperbolicFrequencyRamp(unittest.TestCase):
+    """Tests for hyperbolic frequency ramp type in ExcitationStep and TrapControls."""
+
+    def _make_trap(
+        self,
+        f_begin_kHz: float = 50.0,
+        f_end_kHz: float = 100.0,
+        ramp_type: str = "hyperbolic",
+        rf_begin: float = 100.0,
+        duration_ms: float = 100.0,
+    ) -> TrapControls:
+        """Helper: build a TrapControls configured for a frequency sweep."""
+        trap = TrapControls()
+        trap.basic_controls.r0_cm = 0.5
+        trap.basic_controls.f_RF_MHz = 2.0
+        trap.basic_controls.injection_duration_ms = 1.0
+        step = trap.excitation_steps[0]
+        step.step_delay_ms = 0.0
+        step.step_duration_ms = duration_ms
+        step.enable_frequency_sweep = True
+        step.frequency_begin_kHz = f_begin_kHz
+        step.frequency_end_kHz = f_end_kHz
+        step.frequency_ramp_type = ramp_type
+        step.rf_amplitude_begin_V0p = rf_begin
+        return trap
+
+    # ------------------------------------------------------------------
+    # ExcitationStep dataclass field tests
+    # ------------------------------------------------------------------
+
+    def test_default_frequency_ramp_type_is_linear(self):
+        """ExcitationStep.frequency_ramp_type must default to 'linear'."""
+        step = ExcitationStep()
+        self.assertEqual(step.frequency_ramp_type, "linear")
+
+    def test_frequency_ramp_type_hyperbolic_assignment(self):
+        """frequency_ramp_type can be set to 'hyperbolic'."""
+        step = ExcitationStep(frequency_ramp_type="hyperbolic")
+        self.assertEqual(step.frequency_ramp_type, "hyperbolic")
+
+    def test_frequency_ramp_type_round_trips_via_dict(self):
+        """frequency_ramp_type survives to_dict -> from_dict round-trip."""
+        original = TrapControls()
+        original.excitation_steps[0].frequency_ramp_type = "hyperbolic"
+
+        restored = TrapControls.from_dict(original.to_dict())
+        self.assertEqual(restored.excitation_steps[0].frequency_ramp_type, "hyperbolic")
+
+    def test_frequency_ramp_type_missing_in_old_dict_defaults_to_linear(self):
+        """Dicts without frequency_ramp_type key (legacy) must default to 'linear'."""
+        data = {
+            "basic_controls": {"r0_cm": 0.5, "f_RF_MHz": 2.0},
+            "excitation_steps": [{"step_name": "old_step"}],
+        }
+        trap = TrapControls.from_dict(data)
+        self.assertEqual(trap.excitation_steps[0].frequency_ramp_type, "linear")
+
+    def test_from_dict_ignores_unknown_excitation_step_fields(self):
+        """Unknown fields in excitation_steps must be silently ignored (forward-compat)."""
+        data = {
+            "basic_controls": {"r0_cm": 0.5, "f_RF_MHz": 2.0},
+            "excitation_steps": [
+                {
+                    "step_name": "future_step",
+                    "frequency_begin_kHz": 50.0,
+                    "use_mz_input": True,  # unknown field from newer firmware
+                    "some_future_field": 42.0,  # another unknown field
+                }
+            ],
+        }
+        trap = TrapControls.from_dict(data)
+        self.assertEqual(trap.excitation_steps[0].step_name, "future_step")
+        self.assertAlmostEqual(trap.excitation_steps[0].frequency_begin_kHz, 50.0)
+
+    def test_from_dict_ignores_unknown_basic_controls_fields(self):
+        """Unknown fields in basic_controls must be silently ignored (forward-compat)."""
+        data = {
+            "basic_controls": {
+                "r0_cm": 0.5,
+                "f_RF_MHz": 2.0,
+                "future_hardware_param": 99,  # unknown field from newer firmware
+            },
+            "excitation_steps": [],
+        }
+        trap = TrapControls.from_dict(data)
+        self.assertAlmostEqual(trap.basic_controls.r0_cm, 0.5)
+
+    # ------------------------------------------------------------------
+    # calculate_step_mz_range – endpoints are ramp-type-independent
+    # ------------------------------------------------------------------
+
+    def test_calculate_step_mz_range_same_for_linear_and_hyperbolic(self):
+        """m/z range endpoints must be identical for both ramp types."""
+        trap_lin = self._make_trap(ramp_type="linear")
+        trap_hyp = self._make_trap(ramp_type="hyperbolic")
+
+        mz_lin = trap_lin.calculate_step_mz_range(0)
+        mz_hyp = trap_hyp.calculate_step_mz_range(0)
+
+        self.assertIsNotNone(mz_lin)
+        self.assertIsNotNone(mz_hyp)
+        assert mz_lin is not None and mz_hyp is not None  # type-narrowing
+        self.assertAlmostEqual(mz_lin[0], mz_hyp[0], places=10)
+        self.assertAlmostEqual(mz_lin[1], mz_hyp[1], places=10)
+
+    # ------------------------------------------------------------------
+    # tau1 / psi mathematics
+    # ------------------------------------------------------------------
+
+    def test_tau1_formula(self):
+        """tau1 = 1000 / f_begin_kHz (µs)."""
+        f_begin_kHz = 50.0
+        tau1_expected = 1000.0 / f_begin_kHz  # 20 µs
+        self.assertAlmostEqual(tau1_expected, 20.0, places=10)
+
+    def test_psi_formula_increasing_frequency(self):
+        """psi is negative when sweeping from low to high frequency."""
+        f_begin_kHz = 50.0
+        f_end_kHz = 100.0
+        duration_ms = 100.0
+        tau1 = 1000.0 / f_begin_kHz  # 20 µs
+        tau_end = 1000.0 / f_end_kHz  # 10 µs
+        duration_us = duration_ms * 1000.0
+        psi = (tau_end - tau1) / duration_us
+        # tau decreases → frequency increases → psi < 0
+        self.assertLess(psi, 0.0)
+        self.assertAlmostEqual(psi, (10.0 - 20.0) / 100_000.0, places=15)
+
+    def test_psi_formula_decreasing_frequency(self):
+        """psi is positive when sweeping from high to low frequency."""
+        f_begin_kHz = 100.0
+        f_end_kHz = 50.0
+        duration_ms = 100.0
+        tau1 = 1000.0 / f_begin_kHz  # 10 µs
+        tau_end = 1000.0 / f_end_kHz  # 20 µs
+        duration_us = duration_ms * 1000.0
+        psi = (tau_end - tau1) / duration_us
+        self.assertGreater(psi, 0.0)
+        self.assertAlmostEqual(psi, (20.0 - 10.0) / 100_000.0, places=15)
+
+    def test_hyperbolic_frequency_at_t0_equals_f_begin(self):
+        """f(t=0) = 10^6 / tau1 must equal f_begin_Hz."""
+        f_begin_kHz = 50.0
+        tau1 = 1000.0 / f_begin_kHz  # 20 µs
+        f_at_t0_Hz = 1e6 / tau1
+        self.assertAlmostEqual(f_at_t0_Hz, f_begin_kHz * 1000.0, places=6)
+
+    def test_hyperbolic_frequency_at_t_end_equals_f_end(self):
+        """f(t=duration) = 10^6 / tau_end must equal f_end_Hz."""
+        f_begin_kHz = 50.0
+        f_end_kHz = 100.0
+        duration_ms = 100.0
+        tau1 = 1000.0 / f_begin_kHz
+        tau_end = 1000.0 / f_end_kHz
+        duration_us = duration_ms * 1000.0
+        psi = (tau_end - tau1) / duration_us
+        f_at_end_Hz = 1e6 / (tau1 + psi * duration_us)
+        self.assertAlmostEqual(f_at_end_Hz, f_end_kHz * 1000.0, places=6)
 
 
 class TestTrapControlsRoundTrip(unittest.TestCase):

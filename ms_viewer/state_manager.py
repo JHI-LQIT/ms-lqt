@@ -38,6 +38,7 @@ def load_state(path: str) -> Dict[str, Any]:
             "keepalive": 60,
             # Secondary broker for output/statistics publishing
             "output_broker_enabled": False,
+            "auto_republish_waveforms": True,
             "output_broker_host": "localhost",
             "output_broker_port": 1883,
             "output_broker_output_topic": "lqt/lqt_ms/republish",
