@@ -1012,6 +1012,58 @@ class TestCalcMzValuesTruncation(unittest.TestCase):
         np.testing.assert_array_equal(waveform.f_AC_kHz, np.full(N, 75.0))
         np.testing.assert_array_equal(waveform.rf_amp_V0p, np.full(N, 150.0))
 
+    def test_time_axis_is_generated_for_selected_step(self):
+        """Generated time axis should start at selected step start time."""
+        tc = self._make_freq_sweep_trap(
+            injection_ms=2.0,
+            step_duration_ms=5.0,
+            f_begin=50.0,
+            f_end=100.0,
+        )
+        dt = 1e-6
+        N = 8000
+        waveform = WaveformData(
+            t0=0.0,
+            dt=dt,
+            channels={"ch1": np.ones(N)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+
+        step_start_ms = tc.calculate_step_start_time(0)
+        self.assertEqual(len(waveform.time_ms), len(waveform.mz))
+        self.assertAlmostEqual(float(waveform.time_ms.min()), step_start_ms, places=9)
+        self.assertAlmostEqual(
+            float(waveform.time_ms.max()),
+            step_start_ms + ((len(waveform.time_ms) - 1) * dt * 1000.0),
+            places=9,
+        )
+
+    def test_from_preprocessed_preserves_time_axis(self):
+        """from_preprocessed should keep the source time axis."""
+        tc = self._make_freq_sweep_trap(
+            injection_ms=0.0,
+            step_duration_ms=10.0,
+            f_begin=50.0,
+            f_end=100.0,
+        )
+        waveform = WaveformData(
+            t0=0.0,
+            dt=1e-6,
+            channels={"ch1": np.linspace(0.0, 1.0, 10000)},
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            trapping_parameters=tc,
+            selected_excitation_step=0,
+        )
+
+        preprocessed = WaveformData.from_preprocessed(
+            source=waveform,
+            channels={"ch1": waveform.channels["ch1"].copy()},
+        )
+
+        np.testing.assert_array_equal(preprocessed.time_ms, waveform.time_ms)
+
 
 if __name__ == "__main__":
     unittest.main()
