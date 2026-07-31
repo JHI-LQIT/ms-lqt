@@ -125,7 +125,7 @@ class WaveformData:
             np.ndarray: The calculated m/z values.
             np.ndarray: The frequency array used in the calculation.
             np.ndarray: The RF amplitude array used in the calculation.
-            np.ndarray: The time array (ms) within the selected excitation step.
+            np.ndarray: The time array (ms) aligned to waveform absolute time.
             int: The start index used in the calculation.
             int: The number of samples used in the calculation.
         """
@@ -187,7 +187,7 @@ class WaveformData:
         else:
             rf_amp = np.full(n_samples, rf_begin)
 
-        step_time_ms = np.arange(n_samples, dtype=float) * dt * 1000.0
+        step_time_ms = start_time_ms + (np.arange(n_samples, dtype=float) * dt * 1000.0)
 
         return (
             calculate_mz_from_rf_and_freq(self._multiplier, rf_amp, f_AC),
