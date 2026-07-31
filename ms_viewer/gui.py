@@ -182,6 +182,17 @@ class MqttConfigDialog(QDialog):
         enable_output_layout.addWidget(self.main_window.output_broker_enabled)
         secondary_layout.addLayout(enable_output_layout)
 
+        self.main_window.auto_republish_waveforms = QCheckBox(
+            "Automatically republish every waveform"
+        )
+        self.main_window.auto_republish_waveforms.setChecked(
+            self.main_window.state["mqtt"].get("auto_republish_waveforms", True)
+        )
+        self.main_window.auto_republish_waveforms.stateChanged.connect(
+            self.main_window._on_auto_republish_changed
+        )
+        secondary_layout.addWidget(self.main_window.auto_republish_waveforms)
+
         # Output broker host
         output_host_layout = QHBoxLayout()
         output_host_layout.addWidget(QLabel("Output Broker:"))
@@ -762,6 +773,9 @@ class MainWindow(QMainWindow):
         self.mqtt_client.set_selected_excitation_step(self.selected_excitation_step)
 
         # Connect MQTT signals
+        self.mqtt_client.raw_waveform_received.connect(
+            self._auto_republish_raw_payload
+        )
         self.mqtt_client.waveform_received.connect(self.on_waveform_received)
         self.mqtt_client.trapping_parameters_received.connect(
             self.on_trapping_parameters_received
@@ -1693,9 +1707,14 @@ class MainWindow(QMainWindow):
         self.state["mqtt"]["output_broker_enabled"] = bool(state)
         self._update_output_broker_controls()
 
+    def _on_auto_republish_changed(self, state):
+        """Persist automatic waveform republishing preference."""
+        self.state["mqtt"]["auto_republish_waveforms"] = bool(state)
+
     def _update_output_broker_controls(self):
         """Enable/disable output broker controls based on checkbox state."""
         enabled = self.output_broker_enabled.isChecked()
+        self.auto_republish_waveforms.setEnabled(enabled)
         self.output_broker_host_input.setEnabled(enabled)
         self.output_broker_port_input.setEnabled(enabled)
         self.output_broker_output_topic_input.setEnabled(enabled)
@@ -1943,6 +1962,22 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(
                     f"Waveform republished to {broker_name}", 3000
                 )
+
+    @pyqtSlot(bytes)
+    def _auto_republish_raw_payload(self, payload: bytes):
+        """Forward the original PicoScope payload to the configured output broker."""
+        if not self.state["mqtt"].get("auto_republish_waveforms", True):
+            return
+        if not self.state["mqtt"].get("output_broker_enabled", False):
+            return
+        if self.mqtt_output_client is None or not self.mqtt_output_client.is_connected():
+            return
+
+        topic = self.state["mqtt"].get(
+            "output_broker_output_topic", "lqt/lqt_ms/republish"
+        )
+        self.mqtt_output_client.publish(topic, payload)
+        logger.debug("Automatically forwarded raw waveform to %s", topic)
 
     def _calculate_and_display_statistics(self):
         """Calculate statistics for all ROIs and update displays (in background thread)."""
@@ -2496,21 +2531,26 @@ class MainWindow(QMainWindow):
 
         self.excitation_step_spinbox.setEnabled(True)
 
-        # Check if current step is still active
+        # Mass spectra must be calculated from the analysis/ejection phase, not
+        # from an earlier active preparation step such as reagent ejection.
+        analysis_steps = [
+            index
+            for index in self._active_step_indices
+            if "ms analysis"
+            in trapping_params.excitation_steps[index].step_name.strip().lower()
+        ]
+        preferred_step = (
+            analysis_steps[-1] if analysis_steps else self._active_step_indices[-1]
+        )
+
+        # Preserve an explicitly selected active step. Only recover
+        # automatically when the previous selection is no longer usable.
         if self.selected_excitation_step not in self._active_step_indices:
-            # Try to find next active step
-            new_step = self._find_next_active_step(self.selected_excitation_step)
-            if new_step is None:
-                # Try previous active step
-                new_step = self._find_previous_active_step(
-                    self.selected_excitation_step
-                )
-            if new_step is None:
-                # Fallback to first active step
-                new_step = self._active_step_indices[0]
+            new_step = preferred_step
 
             logger.info(
-                f"Current step {self.selected_excitation_step} is inactive, switching to step {new_step}"
+                f"Selected step {self.selected_excitation_step} is inactive; "
+                f"switching to analysis step {new_step}"
             )
             self.selected_excitation_step = new_step
             # Save to state
