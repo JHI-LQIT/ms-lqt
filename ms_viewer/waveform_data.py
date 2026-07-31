@@ -19,7 +19,7 @@ class WaveformData:
     Attributes:
         t0 (float): Start time in seconds
         dt (float): Time step between samples in seconds
-        times (np.ndarray): Computed time values for each sample
+        time_ms (np.ndarray): Time values in milliseconds for the selected excitation step
         channels (Dict[str, np.ndarray]): Dictionary of channel names to amplitude arrays
         timestamp (datetime): Timestamp when the waveform was captured
         trapping_parameters (TrapControls): Trapping control parameters
@@ -73,7 +73,7 @@ class WaveformData:
 
         # Compute time axis
         N = lengths[0]
-        self.mz, self.f_AC_kHz, self.rf_amp_V0p, start_index, n_samples = (
+        self.mz, self.f_AC_kHz, self.rf_amp_V0p, self.time_ms, start_index, n_samples = (
             self.calc_mz_values(dt, N, selected_excitation_step)
         )
 
@@ -82,6 +82,7 @@ class WaveformData:
         self.mz = self.mz[sorted_indices]
         self.f_AC_kHz = self.f_AC_kHz[sorted_indices]
         self.rf_amp_V0p = self.rf_amp_V0p[sorted_indices]
+        self.time_ms = self.time_ms[sorted_indices]
         for key in self.channels:
             self.channels[key] = self.channels[key][
                 start_index : start_index + n_samples
@@ -111,7 +112,7 @@ class WaveformData:
 
     def calc_mz_values(
         self, dt: float, N: int, step_index: int = 0
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
         """
         Calculate m/z values from trapping parameters and time data.
 
@@ -124,6 +125,7 @@ class WaveformData:
             np.ndarray: The calculated m/z values.
             np.ndarray: The frequency array used in the calculation.
             np.ndarray: The RF amplitude array used in the calculation.
+            np.ndarray: The time array (ms) within the selected excitation step.
             int: The start index used in the calculation.
             int: The number of samples used in the calculation.
         """
@@ -185,10 +187,13 @@ class WaveformData:
         else:
             rf_amp = np.full(n_samples, rf_begin)
 
+        step_time_ms = np.arange(n_samples, dtype=float) * dt * 1000.0
+
         return (
             calculate_mz_from_rf_and_freq(self._multiplier, rf_amp, f_AC),
             f_AC,
             rf_amp,
+            step_time_ms,
             start_idx,
             n_samples,
         )
@@ -228,6 +233,7 @@ class WaveformData:
         instance.mz = source.mz.copy()
         instance.f_AC_kHz = source.f_AC_kHz.copy()
         instance.rf_amp_V0p = source.rf_amp_V0p.copy()
+        instance.time_ms = source.time_ms.copy()
         return instance
 
     def mz_from_rf_and_freq(self, rf_amp_V0p: float, f_AC_kHz: float) -> float:

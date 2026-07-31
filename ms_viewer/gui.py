@@ -613,6 +613,8 @@ class PlotDataWorker(QThread):
                 x_data = self.waveform.f_AC_kHz
             elif self.x_axis_mode == "rf_amplitude":
                 x_data = self.waveform.rf_amp_V0p
+            elif self.x_axis_mode == "time":
+                x_data = self.waveform.time_ms
             else:  # default to mz
                 x_data = self.waveform.mz
 
@@ -937,6 +939,8 @@ class MainWindow(QMainWindow):
             self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
         elif x_axis_mode == "rf_amplitude":
             self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        elif x_axis_mode == "time":
+            self.plot_widget.setLabel("bottom", "Time", units="ms")
         else:
             self.plot_widget.setLabel("bottom", "m/z", units="Da")
 
@@ -1067,12 +1071,14 @@ class MainWindow(QMainWindow):
         self.xaxis_mz_radio = QRadioButton("m/z (Da)")
         self.xaxis_freq_radio = QRadioButton("f_AC (kHz)")
         self.xaxis_rf_radio = QRadioButton("RF Amp (V0p)")
+        self.xaxis_time_radio = QRadioButton("Time (ms)")
 
         # Create button group
         self.xaxis_button_group = QButtonGroup()
         self.xaxis_button_group.addButton(self.xaxis_mz_radio, 0)
         self.xaxis_button_group.addButton(self.xaxis_freq_radio, 1)
         self.xaxis_button_group.addButton(self.xaxis_rf_radio, 2)
+        self.xaxis_button_group.addButton(self.xaxis_time_radio, 3)
 
         # Set default from state
         x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
@@ -1080,6 +1086,8 @@ class MainWindow(QMainWindow):
             self.xaxis_freq_radio.setChecked(True)
         elif x_axis_mode == "rf_amplitude":
             self.xaxis_rf_radio.setChecked(True)
+        elif x_axis_mode == "time":
+            self.xaxis_time_radio.setChecked(True)
         else:
             self.xaxis_mz_radio.setChecked(True)
 
@@ -1090,6 +1098,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.xaxis_mz_radio)
         layout.addWidget(self.xaxis_freq_radio)
         layout.addWidget(self.xaxis_rf_radio)
+        layout.addWidget(self.xaxis_time_radio)
 
         # Add excitation step selection
         excitation_layout = QHBoxLayout()
@@ -1123,9 +1132,12 @@ class MainWindow(QMainWindow):
         elif button == self.xaxis_freq_radio:
             x_axis_mode = "frequency"
             self.plot_widget.setLabel("bottom", "f_AC", units="kHz")
-        else:  # rf_amplitude
+        elif button == self.xaxis_rf_radio:
             x_axis_mode = "rf_amplitude"
             self.plot_widget.setLabel("bottom", "RF Amplitude", units="V0p")
+        else:  # time
+            x_axis_mode = "time"
+            self.plot_widget.setLabel("bottom", "Time", units="ms")
 
         # Save to state
         if "gui" not in self.state:
@@ -1464,6 +1476,8 @@ class MainWindow(QMainWindow):
 
         if x_axis_mode == "frequency":
             x_data = self.current_waveform.f_AC_kHz
+        elif x_axis_mode == "time":
+            x_data = self.current_waveform.time_ms
         else:  # rf_amplitude
             x_data = self.current_waveform.rf_amp_V0p
 
@@ -1487,6 +1501,8 @@ class MainWindow(QMainWindow):
         # Get appropriate x-axis array
         if x_axis_mode == "frequency":
             x_data = self.current_waveform.f_AC_kHz
+        elif x_axis_mode == "time":
+            x_data = self.current_waveform.time_ms
         else:  # rf_amplitude
             x_data = self.current_waveform.rf_amp_V0p
 
@@ -2783,6 +2799,8 @@ class MainWindow(QMainWindow):
             x_data = waveform.f_AC_kHz
         elif x_axis_mode == "rf_amplitude":
             x_data = waveform.rf_amp_V0p
+        elif x_axis_mode == "time":
+            x_data = waveform.time_ms
         else:
             x_data = waveform.mz
 
@@ -2831,7 +2849,7 @@ class MainWindow(QMainWindow):
         Update the plot with pre-scaled channel data (from worker thread).
 
         Args:
-            x_data: X-axis data array (m/z, f_AC, or rf_amp depending on mode)
+            x_data: X-axis data array (m/z, f_AC, rf_amp, or time depending on mode)
             scaled_channels: Dictionary of channel_name -> scaled_data
             timestamp: Waveform timestamp
         """
