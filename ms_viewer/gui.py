@@ -968,6 +968,21 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_content)
         metrics_layout.addWidget(scroll)
 
+        # History length control
+        history_points_layout = QHBoxLayout()
+        history_points_layout.addWidget(QLabel("History Points:"))
+        self.history_points_spinbox = QSpinBox()
+        self.history_points_spinbox.setRange(10, 100000)
+        self.history_points_spinbox.setValue(self.max_history_points)
+        self.history_points_spinbox.setToolTip(
+            "Maximum number of points kept per statistics curve"
+        )
+        self.history_points_spinbox.valueChanged.connect(
+            self._on_max_history_points_changed
+        )
+        history_points_layout.addWidget(self.history_points_spinbox)
+        metrics_layout.addLayout(history_points_layout)
+
         # Clear history button
         clear_btn = QPushButton("Clear History")
         clear_btn.clicked.connect(self._clear_statistics_history)
@@ -2414,6 +2429,23 @@ class MainWindow(QMainWindow):
         """Clear all statistics history."""
         self.statistics_history.clear()
         self._update_statistics_plot()
+
+    def _on_max_history_points_changed(self, value: int):
+        """Update maximum history points for statistics curves."""
+        self.max_history_points = value
+
+        if "preferences" not in self.state:
+            self.state["preferences"] = {}
+        self.state["preferences"]["max_history_points"] = value
+
+        # Trim existing history if the new limit is smaller.
+        for metric_history in self.statistics_history.values():
+            for data_points in metric_history.values():
+                if len(data_points) > value:
+                    del data_points[:-value]
+
+        self._update_statistics_plot()
+        state_manager.save_state(self.state_path, self.state)
 
     def _reload_plugins(self):
         """Reload custom statistic plugins."""
