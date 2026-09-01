@@ -1080,7 +1080,7 @@ class MainWindow(QMainWindow):
     def _setup_xaxis_controls(self):
         """Set up x-axis selection controls."""
         self.xaxis_group = QGroupBox("X-Axis")
-        layout = QVBoxLayout()
+        layout = QHBoxLayout()
 
         # Create radio buttons
         self.xaxis_mz_radio = QRadioButton("m/z (Da)")
@@ -1109,11 +1109,13 @@ class MainWindow(QMainWindow):
         # Connect signal
         self.xaxis_button_group.buttonClicked.connect(self._on_xaxis_changed)
 
-        # Add to layout
-        layout.addWidget(self.xaxis_mz_radio)
-        layout.addWidget(self.xaxis_freq_radio)
-        layout.addWidget(self.xaxis_rf_radio)
-        layout.addWidget(self.xaxis_time_radio)
+        # Add radio buttons to horizontal layout
+        radio_layout = QHBoxLayout()
+        radio_layout.addWidget(self.xaxis_mz_radio)
+        radio_layout.addWidget(self.xaxis_freq_radio)
+        radio_layout.addWidget(self.xaxis_rf_radio)
+        radio_layout.addWidget(self.xaxis_time_radio)
+        layout.addLayout(radio_layout)
 
         # Add excitation step selection
         excitation_layout = QHBoxLayout()
