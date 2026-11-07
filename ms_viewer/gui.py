@@ -1698,7 +1698,7 @@ class MainWindow(QMainWindow):
         self._statistics_dropped_label.setText(f"ROI scans dropped: {count}")
 
     def _on_statistics_calculated(
-        self, statistics: List[ROIStatistics], num_averaged: int
+        self, statistics: List[ROIStatistics], num_averaged: int, capture_time: datetime
     ):
         """Handle completion of statistics calculation from worker thread."""
         # Update results
@@ -1707,11 +1707,11 @@ class MainWindow(QMainWindow):
 
         # Update displays
         self._update_statistics_table()
-        self._update_statistics_history()
+        self._update_statistics_history(capture_time)
         self._update_statistics_plot()
 
         # Publish statistics to MQTT
-        self._publish_statistics()
+        self._publish_statistics(capture_time)
 
     def _on_plot_data_ready(
         self,
@@ -1862,14 +1862,10 @@ class MainWindow(QMainWindow):
                     self.statistics_table.setItem(row_idx, col, QTableWidgetItem("N/A"))
                 col += 1
 
-    def _update_statistics_history(self):
+    def _update_statistics_history(self, capture_time: datetime):
         """Add current statistics to history for plotting over time."""
         if not self.current_statistics:
             return
-
-        timestamp = (
-            self.current_waveform.timestamp if self.current_waveform else datetime.now()
-        )
 
         for stats in self.current_statistics:
             # Create a unique key for this channel/ROI combination
@@ -1893,7 +1889,7 @@ class MainWindow(QMainWindow):
             # Add data points for each built-in statistic using metric names as keys
             for metric_name, attr_name in metric_to_attr.items():
                 value = getattr(stats, attr_name)
-                self.statistics_history[metric_name][key].append((timestamp, value))
+                self.statistics_history[metric_name][key].append((capture_time, value))
 
                 # Limit history size
                 if (
@@ -1904,7 +1900,7 @@ class MainWindow(QMainWindow):
 
             # Add data points for custom metrics
             for metric_name, value in stats.custom_metrics.items():
-                self.statistics_history[metric_name][key].append((timestamp, value))
+                self.statistics_history[metric_name][key].append((capture_time, value))
 
                 # Limit history size
                 if (
@@ -2212,7 +2208,7 @@ class MainWindow(QMainWindow):
             f"Select active excitation step for m/z calculation.\nActive steps: {active_steps_str}"
         )
 
-    def _publish_statistics(self):
+    def _publish_statistics(self, capture_time: datetime):
         """Publish current statistics to MQTT statistics topic."""
         import json
 
@@ -2243,11 +2239,7 @@ class MainWindow(QMainWindow):
 
         # Build payload with all statistics
         payload_data = {
-            "timestamp": (
-                self.current_waveform.timestamp.isoformat()
-                if self.current_waveform
-                else datetime.now().isoformat()
-            ),
+            "timestamp": capture_time.isoformat(),
             "num_averaged_waveforms": self._num_averaged_waveforms,
             "statistics": [stats.to_dict() for stats in self.current_statistics],
         }
