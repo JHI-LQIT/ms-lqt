@@ -49,6 +49,7 @@ from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
 from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
 from .trapping_parameters import ExcitationStep, TrapControls
+from .waveform_averaging import average_latest_batch
 
 logger = logging.getLogger(__name__)
 
@@ -310,20 +311,12 @@ class StatisticsWorker(QThread):
             return
 
         try:
-            # Average waveforms if more than one
-            if len(self.waveforms_to_process) > 1:
-                try:
-                    averaged_waveform = self._average_waveforms(
-                        self.waveforms_to_process
-                    )
-                except ValueError as e:
-                    # Waveform dimensions changed - use only the last one
-                    logging.warning(
-                        f"Cannot average waveforms with different dimensions: {e}. Using last waveform only."
-                    )
-                    averaged_waveform = self.waveforms_to_process[-1]
-            else:
-                averaged_waveform = self.waveforms_to_process[0]
+            if self._should_stop:
+                return
+
+            averaged_waveform, num_averaged = average_latest_batch(
+                self.waveforms_to_process
+            )
 
             if self._should_stop:
                 return
@@ -352,73 +345,11 @@ class StatisticsWorker(QThread):
                 scaled_waveform, self.rois
             )
 
-            num_averaged = len(self.waveforms_to_process)
-
             # Emit result
             self.calculation_complete.emit(statistics, num_averaged)
 
         except Exception as e:
             logging.error(f"Error in statistics calculation thread: {e}", exc_info=True)
-
-    def _average_waveforms(self, waveforms: List[WaveformData]) -> WaveformData:
-        """Average multiple waveforms together.
-
-        Args:
-            waveforms: List of WaveformData objects to average
-
-        Returns:
-            Averaged WaveformData
-        """
-        if not waveforms:
-            raise ValueError("Cannot average empty waveform list")
-
-        if len(waveforms) == 1:
-            return waveforms[0]
-
-        # Use first waveform as template
-        first = waveforms[0]
-
-        # Validate that all waveforms have compatible dimensions
-        for wf in waveforms[1:]:
-            if self._should_stop:
-                raise ValueError("Calculation stopped")
-
-            # Check if channel sets match
-            if set(wf.channels.keys()) != set(first.channels.keys()):
-                raise ValueError("Cannot average waveforms with different channel sets")
-
-            # Check if array shapes match for each channel
-            for ch_name in first.channels.keys():
-                if wf.channels[ch_name].shape != first.channels[ch_name].shape:
-                    raise ValueError(
-                        f"Cannot average waveforms: channel '{ch_name}' has "
-                        f"incompatible shapes ({first.channels[ch_name].shape} vs {wf.channels[ch_name].shape})"
-                    )
-
-        # Average channels
-        averaged_channels = {}
-        for ch_name in first.channels.keys():
-            if self._should_stop:
-                raise ValueError("Calculation stopped")
-
-            # Collect all channel data
-            channel_data = []
-            for wf in waveforms:
-                if ch_name in wf.channels:
-                    channel_data.append(wf.channels[ch_name])
-
-            if channel_data:
-                # Average across all waveforms
-                averaged_channels[ch_name] = np.mean(channel_data, axis=0)
-
-        # Use latest timestamp
-        latest_timestamp = max(wf.timestamp for wf in waveforms)
-
-        return WaveformData.from_preprocessed(
-            source=first,
-            channels=averaged_channels,
-            timestamp=latest_timestamp,
-        )
 
 
 class ExportWorker(QThread):
@@ -649,6 +580,7 @@ class MainWindow(QMainWindow):
         self._statistics_worker.calculation_complete.connect(
             self._on_statistics_calculated
         )
+        self._statistics_worker.finished.connect(self._on_statistics_finished)
         self._statistics_calculation_pending = False
 
         # Plot data preparation worker thread
@@ -2006,7 +1938,7 @@ class MainWindow(QMainWindow):
                 scaling_functions[ch_name] = lambda data: data
 
         # Copy accumulated waveforms for thread safety
-        waveforms_copy = self._accumulated_waveforms.copy()
+        waveforms_copy = self._accumulated_waveforms.copy() or [self.current_waveform]
 
         # Clear accumulated waveforms now (don't wait for thread)
         self._accumulated_waveforms.clear()
@@ -2015,6 +1947,7 @@ class MainWindow(QMainWindow):
         self._statistics_worker.setup_calculation(
             waveforms_copy, rois, scaling_functions, self.statistics_calculator
         )
+        self._statistics_calculation_pending = False
         self._statistics_worker.start()
 
     def _on_statistics_calculated(
@@ -2033,12 +1966,11 @@ class MainWindow(QMainWindow):
         # Publish statistics to MQTT
         self._publish_statistics()
 
-        # If another calculation is pending, trigger it
+    def _on_statistics_finished(self):
+        """Run any calculation queued while the worker was busy."""
         if self._statistics_calculation_pending:
             self._statistics_calculation_pending = False
             if len(self.regions) > 0 and self.current_waveform is not None:
-                # Re-accumulate current waveform and trigger calculation
-                self._accumulated_waveforms.append(self.current_waveform)
                 self._calculate_and_display_statistics()
 
     def _on_plot_data_ready(
