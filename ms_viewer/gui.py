@@ -431,16 +431,12 @@ class ExportWorker(QThread):
         super().__init__(parent)
         self.file_path = None
         self.waveform = None
-        self.export_type = "csv"  # or "payload"
         self._should_stop = False
 
-    def setup_export(
-        self, file_path: str, waveform: WaveformData, export_type: str = "csv"
-    ):
+    def setup_export(self, file_path: str, waveform: WaveformData):
         """Set up the export operation."""
         self.file_path = file_path
         self.waveform = waveform
-        self.export_type = export_type
         self._should_stop = False
 
     def stop(self):
@@ -453,65 +449,13 @@ class ExportWorker(QThread):
             self.export_complete.emit(False, "No data or path specified")
             return
 
-        try:
-            if self.export_type == "csv":
-                success = self._export_csv()
-                if success:
-                    self.export_complete.emit(
-                        True, f"Waveform exported to {self.file_path}"
-                    )
-                else:
-                    self.export_complete.emit(
-                        False, "Export failed. Check logs for details."
-                    )
-            else:
-                self.export_complete.emit(
-                    False, f"Unknown export type: {self.export_type}"
-                )
-        except Exception as e:
-            logging.error(f"Error in export thread: {e}", exc_info=True)
-            self.export_complete.emit(False, f"Export error: {str(e)}")
-
-    def _export_csv(self) -> bool:
-        """Export waveform to CSV (adapted from exporter.py)."""
-        import csv
-
-        if not self.file_path or not self.waveform:
-            return False
-
-        try:
-            with open(self.file_path, "w", newline="") as csvfile:
-                # Get sorted channel names for consistent ordering
-                channel_names = sorted(self.waveform.channels.keys())
-
-                # Create header
-                header = ["m/z"] + channel_names
-
-                writer = csv.writer(csvfile)
-                writer.writerow(header)
-
-                # Write data rows in batches to allow cancellation
-                batch_size = 10000
-                mz = self.waveform.mz
-                n_samples = len(mz)
-
-                for batch_start in range(0, n_samples, batch_size):
-                    if self._should_stop:
-                        return False
-
-                    batch_end = min(batch_start + batch_size, n_samples)
-                    for i in range(batch_start, batch_end):
-                        row = [mz[i]]
-                        for ch_name in channel_names:
-                            row.append(self.waveform.channels[ch_name][i])
-                        writer.writerow(row)
-
-            logging.info(f"Successfully exported waveform to {self.file_path}")
-            return True
-
-        except Exception as e:
-            logging.error(f"Failed to export waveform to {self.file_path}: {e}")
-            return False
+        success = export_waveform_to_csv(
+            self.file_path, self.waveform, is_cancelled=lambda: self._should_stop
+        )
+        if success:
+            self.export_complete.emit(True, f"Waveform exported to {self.file_path}")
+        elif not self._should_stop:
+            self.export_complete.emit(False, "Export failed. Check logs for details.")
 
 
 class PayloadWorker(QThread):
@@ -1894,6 +1838,9 @@ class MainWindow(QMainWindow):
         )
 
         if file_path:
+            if not file_path.lower().endswith(".csv"):
+                file_path += ".csv"
+
             # Check if we should use threaded export for large waveforms
             max_samples = max(
                 len(data) for data in self.current_waveform.channels.values()
@@ -1906,12 +1853,9 @@ class MainWindow(QMainWindow):
                     self.status_bar.showMessage(
                         "Exporting large waveform in background...", 0
                     )
-                    self._export_worker.setup_export(
-                        file_path, self.current_waveform, "csv"
-                    )
-                    self._export_worker.start()
-                    # Store path for later
+                    self._export_worker.setup_export(file_path, self.current_waveform)
                     self._pending_export_path = file_path
+                    self._export_worker.start()
                 else:
                     QMessageBox.warning(
                         self,
@@ -2922,6 +2866,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):  # type: ignore[override]
         """Handle window close event - save state."""
+        self._export_worker.stop()
+        self._export_worker.wait()
+
         # Save window geometry
         geom = self.geometry()
         self.state["gui"]["window_geometry"] = {

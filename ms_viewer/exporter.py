@@ -6,16 +6,22 @@ and building MQTT payloads for republishing.
 """
 
 import csv
-import json
 import logging
-from typing import Dict
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Callable
 
 from .data_model import WaveformData, encode_payload
 
 logger = logging.getLogger(__name__)
 
 
-def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
+def export_waveform_to_csv(
+    path: str,
+    waveform: WaveformData,
+    *,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> bool:
     """
     Export waveform data to a CSV file.
 
@@ -27,16 +33,23 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
     Args:
         path: Path to the output CSV file (.csv extension added automatically if missing)
         waveform: WaveformData object to export
+        is_cancelled: Optional callback checked between batches of rows
 
     Returns:
-        True if successful, False otherwise
+        True if the export completed, False on cancellation or failure
     """
+    temporary_path = None
     try:
         # Add .csv extension if not present
         if not path.lower().endswith(".csv"):
             path = path + ".csv"
 
-        with open(path, "w", newline="") as csvfile:
+        destination = Path(path)
+        with NamedTemporaryFile(
+            mode="w", newline="", encoding="utf-8", dir=destination.parent,
+            delete=False,
+        ) as csvfile:
+            temporary_path = Path(csvfile.name)
             # Write metadata as a single comment line with # as delimiter
             step = waveform.trapping_parameters.excitation_steps[
                 waveform.selected_excitation_step
@@ -86,10 +99,17 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
 
             # Write data rows
             for i, mz_val in enumerate(waveform.mz):
+                if is_cancelled is not None and i % 10000 == 0 and is_cancelled():
+                    return False
                 row = [mz_val]
                 for ch_name in channel_names:
                     row.append(waveform.channels[ch_name][i])
                 writer.writerow(row)
+
+        if is_cancelled is not None and is_cancelled():
+            return False
+        temporary_path.replace(destination)
+        temporary_path = None
 
         logger.info(f"Successfully exported waveform to {path}")
         return True
@@ -97,6 +117,12 @@ def export_waveform_to_csv(path: str, waveform: WaveformData) -> bool:
     except Exception as e:
         logger.error(f"Failed to export waveform to {path}: {e}")
         return False
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove temporary export %s", temporary_path, exc_info=True)
 
 
 def build_payload(waveform: WaveformData) -> bytes:
