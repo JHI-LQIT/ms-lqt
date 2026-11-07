@@ -47,6 +47,7 @@ from . import state_manager
 from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
 from .mqtt_client import MqttClient
+from .roi_axis import ROIAxisMapping
 from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
 from .trapping_parameters import ExcitationStep, TrapControls
 from .waveform_averaging import average_latest_batch
@@ -436,7 +437,7 @@ class PlotDataWorker(QThread):
     """Worker thread for preparing plot data (scaling) to avoid blocking the GUI."""
 
     # Signal emitted when preparation is complete
-    # Emits: (x_data, scaled_channels_dict, timestamp)
+    # Emits: (waveform, scaled_channels_dict, x_axis_mode)
     data_ready = pyqtSignal(object, dict, object)
 
     def __init__(self, parent=None):
@@ -483,18 +484,7 @@ class PlotDataWorker(QThread):
             if self._should_stop:
                 return
 
-            # Get x-axis data based on mode
-            if self.x_axis_mode == "frequency":
-                x_data = self.waveform.f_AC_kHz
-            elif self.x_axis_mode == "rf_amplitude":
-                x_data = self.waveform.rf_amp_V0p
-            elif self.x_axis_mode == "time":
-                x_data = self.waveform.time_ms
-            else:  # default to mz
-                x_data = self.waveform.mz
-
-            # Emit result
-            self.data_ready.emit(x_data, scaled_channels, self.waveform.timestamp)
+            self.data_ready.emit(self.waveform, scaled_channels, self.x_axis_mode)
 
         except Exception as e:
             logging.error(f"Error in plot data preparation thread: {e}", exc_info=True)
@@ -526,6 +516,7 @@ class MainWindow(QMainWindow):
         )
         self.plot_curves: Dict[str, pg.PlotDataItem] = {}
         self.regions: List[pg.LinearRegionItem] = []
+        self._roi_axis_mapping: Optional[ROIAxisMapping] = None
         # Store m/z bounds for each region (key: region object, value: (start_mz, end_mz))
         self.region_mz_bounds: Dict[pg.LinearRegionItem, tuple] = {}
         # Track if trapping parameters were received
@@ -674,6 +665,7 @@ class MainWindow(QMainWindow):
 
         # Restore regions
         self._restore_regions()
+        self._update_region_positions()
 
         # Restore splitter position
         if self.state["gui"].get("splitter_sizes"):
@@ -1038,13 +1030,11 @@ class MainWindow(QMainWindow):
         self.state["gui"]["x_axis_mode"] = x_axis_mode
         state_manager.save_state(self.state_path, self.state)
 
-        # Update region positions to match new x-axis
-        if self.current_waveform:
-            self._update_region_positions()
-
         # Update plot if we have data
         if self.current_waveform:
             self._update_plot(self.current_waveform)
+        else:
+            self._update_region_positions()
 
     def _on_excitation_step_changed(self, value: int):
         """Handle excitation step selection change."""
@@ -1352,85 +1342,36 @@ class MainWindow(QMainWindow):
             keepalive=mqtt_config.get("keepalive", 60),
         )
 
-    def _mz_to_xaxis(self, start_mz: float, end_mz: float) -> tuple:
-        """Convert m/z bounds to current x-axis units."""
-        if not self.current_waveform:
-            # No waveform data, return m/z as-is
-            return start_mz, end_mz
+    def _display_region(self, region: pg.LinearRegionItem):
+        """Project the stored m/z bounds onto the displayed axis when possible."""
+        bounds = self.region_mz_bounds[region]
+        if self.state["gui"].get("x_axis_mode", "mz") != "mz":
+            if self._roi_axis_mapping is None:
+                region.hide()
+                return
+            bounds = self._roi_axis_mapping.to_display(bounds)
 
-        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
-
-        if x_axis_mode == "mz":
-            return start_mz, end_mz
-
-        # Use interpolation to convert m/z to x-axis values
-        # This handles inverse relationships correctly (e.g., f_AC decreases as m/z increases)
-        mz = self.current_waveform.mz
-
-        if x_axis_mode == "frequency":
-            x_data = self.current_waveform.f_AC_kHz
-        elif x_axis_mode == "time":
-            x_data = self.current_waveform.time_ms
-        else:  # rf_amplitude
-            x_data = self.current_waveform.rf_amp_V0p
-
-        # Interpolate to find x-axis values corresponding to m/z bounds
-        start_x = float(np.interp(start_mz, mz, x_data))
-        end_x = float(np.interp(end_mz, mz, x_data))
-
-        return start_x, end_x
-
-    def _xaxis_to_mz(self, start_x: float, end_x: float) -> tuple:
-        """Convert current x-axis bounds to m/z values."""
-        if not self.current_waveform:
-            # No waveform data, assume it's already m/z
-            return start_x, end_x
-
-        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
-
-        if x_axis_mode == "mz":
-            return start_x, end_x
-
-        # Get appropriate x-axis array
-        if x_axis_mode == "frequency":
-            x_data = self.current_waveform.f_AC_kHz
-        elif x_axis_mode == "time":
-            x_data = self.current_waveform.time_ms
-        else:  # rf_amplitude
-            x_data = self.current_waveform.rf_amp_V0p
-
-        mz = self.current_waveform.mz
-
-        # Check if x_data is monotonically increasing or decreasing
-        # For interp to work, x-values must be monotonically increasing
-        if len(x_data) > 1 and x_data[0] > x_data[-1]:
-            # x_data is decreasing (e.g., f_AC decreases as m/z increases)
-            # Reverse both arrays for interpolation
-            x_data_sorted = x_data[::-1]
-            mz_sorted = mz[::-1]
-            start_mz = float(np.interp(start_x, x_data_sorted, mz_sorted))
-            end_mz = float(np.interp(end_x, x_data_sorted, mz_sorted))
-        else:
-            # x_data is increasing (normal case)
-            start_mz = float(np.interp(start_x, x_data, mz))
-            end_mz = float(np.interp(end_x, x_data, mz))
-
-        # Ensure m/z values are in correct order (start < end)
-        if start_mz > end_mz:
-            start_mz, end_mz = end_mz, start_mz
-
-        return start_mz, end_mz
+        signals_were_blocked = region.blockSignals(True)
+        try:
+            region.setRegion(bounds)
+            region.show()
+        finally:
+            region.blockSignals(signals_were_blocked)
 
     def _update_region_positions(self):
-        """Update all region positions when x-axis mode changes."""
+        """Reproject ROIs without changing their stored m/z bounds."""
+        unavailable = (
+            self.state["gui"].get("x_axis_mode", "mz") != "mz"
+            and self._roi_axis_mapping is None
+        )
+        self.region_table.setToolTip(
+            "Plot markers require a one-to-one mapping to m/z. "
+            "You can still edit the m/z bounds here."
+            if unavailable
+            else ""
+        )
         for region in self.regions:
-            if region in self.region_mz_bounds:
-                start_mz, end_mz = self.region_mz_bounds[region]
-                start_x, end_x = self._mz_to_xaxis(start_mz, end_mz)
-                # Block signals to prevent triggering _update_region_table during programmatic update
-                region.blockSignals(True)
-                region.setRegion([start_x, end_x])
-                region.blockSignals(False)
+            self._display_region(region)
 
     def _restore_regions(self):
         """Restore regions from saved state."""
@@ -1451,14 +1392,11 @@ class MainWindow(QMainWindow):
             end_mz: End m/z
             name: Region name
         """
-        # Store m/z bounds
-        # Convert m/z to current x-axis units for display
-        start_x, end_x = self._mz_to_xaxis(start_mz, end_mz)
-
-        region = pg.LinearRegionItem(values=[start_x, end_x], brush=(100, 100, 255, 50))
+        region = pg.LinearRegionItem(values=[start_mz, end_mz], brush=(100, 100, 255, 50))
         self.plot_widget.addItem(region)
         self.regions.append(region)
         self.region_mz_bounds[region] = (start_mz, end_mz)
+        self._display_region(region)
 
         # Add to table (block signals to avoid triggering cellChanged)
         row = self.region_table.rowCount()
@@ -1470,16 +1408,17 @@ class MainWindow(QMainWindow):
         self.region_table.blockSignals(False)
 
         # Connect region change to table update
-        region.sigRegionChanged.connect(lambda: self._update_region_table(region, row))
+        region.sigRegionChanged.connect(lambda: self._update_region_table(region))
 
-    def _update_region_table(self, region: pg.LinearRegionItem, row: int):
-        """Update table when region is moved."""
-        region_values = region.getRegion()
-        start_x = float(region_values[0])  # type: ignore[arg-type]
-        end_x = float(region_values[1])  # type: ignore[arg-type]
-
-        # Convert x-axis position back to m/z
-        start_mz, end_mz = self._xaxis_to_mz(start_x, end_x)
+    def _update_region_table(self, region: pg.LinearRegionItem):
+        """Update table when a plotted region is moved."""
+        bounds = tuple(float(value) for value in region.getRegion())
+        if self.state["gui"].get("x_axis_mode", "mz") != "mz":
+            if self._roi_axis_mapping is None:
+                return
+            bounds = self._roi_axis_mapping.to_mz(bounds)
+        start_mz, end_mz = bounds
+        row = self.regions.index(region)
 
         # Update stored m/z bounds
         self.region_mz_bounds[region] = (start_mz, end_mz)
@@ -1521,21 +1460,17 @@ class MainWindow(QMainWindow):
                 end = float(end_item.text())
 
                 # Validate
-                if start >= end:
-                    raise ValueError("Start m/z must be less than end m/z")
+                if not np.isfinite([start, end]).all() or start >= end:
+                    raise ValueError("Enter finite m/z bounds with start less than end")
 
                 # Store m/z bounds
                 self.region_mz_bounds[region] = (start, end)
 
-                # Convert m/z to current x-axis units for visual update
-                start_x, end_x = self._mz_to_xaxis(start, end)
-
-                # Update the region (will trigger _update_region_table, but signals are blocked)
-                region.setRegion([start_x, end_x])
+                self._display_region(region)
+                self._calculate_and_display_statistics_throttled()
 
             except ValueError as e:
-                # Restore previous values if parsing fails
-                current_start, current_end = region.getRegion()
+                current_start, current_end = self.region_mz_bounds[region]
                 self.region_table.blockSignals(True)
                 self.region_table.setItem(
                     row, 1, QTableWidgetItem(f"{current_start:.6f}")
@@ -1710,9 +1645,11 @@ class MainWindow(QMainWindow):
 
     def add_region(self):
         """Add a new region of interest."""
-        if self.current_waveform is None:
+        if self.current_waveform is None or self.current_waveform.mz.size < 2:
             QMessageBox.information(
-                self, "No Data", "Please wait for waveform data before adding regions."
+                self,
+                "No Data",
+                "At least two waveform samples are needed to add a region.",
             )
             return
 
@@ -1904,15 +1841,7 @@ class MainWindow(QMainWindow):
         # Build ROI definitions from current regions using stored m/z bounds
         rois = []
         for i, region in enumerate(self.regions):
-            # Use stored m/z bounds instead of visual position
-            if region in self.region_mz_bounds:
-                start, end = self.region_mz_bounds[region]
-            else:
-                # Fallback to visual position (convert to m/z if needed)
-                region_values = region.getRegion()
-                start_x = float(region_values[0])  # type: ignore[arg-type]
-                end_x = float(region_values[1])  # type: ignore[arg-type]
-                start, end = self._xaxis_to_mz(start_x, end_x)
+            start, end = self.region_mz_bounds[region]
 
             # Get name from table
             name = f"Region {i+1}"
@@ -1975,13 +1904,13 @@ class MainWindow(QMainWindow):
 
     def _on_plot_data_ready(
         self,
-        mz: np.ndarray,
+        waveform: WaveformData,
         scaled_channels: Dict[str, np.ndarray],
-        timestamp: datetime,
+        x_axis_mode: str,
     ):
         """Handle completion of plot data preparation from worker thread."""
-        # Update plot with prepared data
-        self._update_plot_with_scaled_data(mz, scaled_channels, timestamp)
+        if x_axis_mode == self.state["gui"].get("x_axis_mode", "mz"):
+            self._update_plot_with_scaled_data(waveform, scaled_channels, x_axis_mode)
 
         # If another preparation is pending, trigger it
         if self._plot_data_pending and self._pending_plot_waveform is not None:
@@ -2575,14 +2504,9 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def on_waveform_received(self, waveform: WaveformData):
         """Handle received waveform data."""
-        first_waveform = self.current_waveform is None
         self.current_waveform = waveform
         self.original_waveform = waveform  # Store original unmodified waveform
         self._waveform_counter += 1
-
-        # Update region positions on first waveform if we have restored regions
-        if first_waveform and len(self.regions) > 0:
-            self._update_region_positions()
 
         # Update scaling controls for new channels (only if changed)
         if (
@@ -2697,72 +2621,36 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Output broker error: {message}", 10000)
 
     def _update_plot(self, waveform: WaveformData):
-        """
-        Update the plot with new waveform data.
-
-        Args:
-            waveform: WaveformData to plot
-        """
-        # Get x-axis data based on current mode
-        x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
-        if x_axis_mode == "frequency":
-            x_data = waveform.f_AC_kHz
-        elif x_axis_mode == "rf_amplitude":
-            x_data = waveform.rf_amp_V0p
-        elif x_axis_mode == "time":
-            x_data = waveform.time_ms
-        else:
-            x_data = waveform.mz
-
-        # Get sorted channel names for consistent ordering
-        channel_names = sorted(waveform.channels.keys())
-
-        # Remove curves that no longer exist
-        for ch_name in list(self.plot_curves.keys()):
-            if ch_name not in channel_names:
-                self.plot_widget.removeItem(self.plot_curves[ch_name])
-                del self.plot_curves[ch_name]
-
-        # Update or create curves
-        for i, ch_name in enumerate(channel_names):
-            color = tuple(self.channel_colors[i % len(self.channel_colors)])
-
-            # Apply scaling: y := Gain * (y - Offset)
-            scaled_data = self._apply_channel_scaling(
-                ch_name, waveform.channels[ch_name]
-            )
-
-            if ch_name in self.plot_curves:
-                # Update existing curve
-                self.plot_curves[ch_name].setData(x_data, scaled_data)
-            else:
-                # Create new curve
-                pen = pg.mkPen(color=color, width=2)
-                curve = self.plot_widget.plot(
-                    x_data, scaled_data, pen=pen, name=ch_name
-                )
-                curve.setDownsampling(auto=True)
-                curve.setClipToView(True)
-                self.plot_curves[ch_name] = curve
-
-        # Update title with timestamp and excitation step info
-        timestamp_str = f"Last timestamp: {waveform.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
-        self._update_plot_title(timestamp_str)
+        """Scale and plot a waveform synchronously."""
+        scaled_channels = {
+            name: self._apply_channel_scaling(name, data)
+            for name, data in waveform.channels.items()
+        }
+        x_axis_mode = self.state["gui"].get("x_axis_mode", "mz")
+        self._update_plot_with_scaled_data(waveform, scaled_channels, x_axis_mode)
 
     def _update_plot_with_scaled_data(
         self,
-        x_data: np.ndarray,
+        waveform: WaveformData,
         scaled_channels: Dict[str, np.ndarray],
-        timestamp: datetime,
+        x_axis_mode: str,
     ):
-        """
-        Update the plot with pre-scaled channel data (from worker thread).
+        """Render the waveform and use its axes to position ROI markers."""
+        x_data = {
+            "frequency": waveform.f_AC_kHz,
+            "rf_amplitude": waveform.rf_amp_V0p,
+            "time": waveform.time_ms,
+        }.get(x_axis_mode, waveform.mz)
 
-        Args:
-            x_data: X-axis data array (m/z, f_AC, rf_amp, or time depending on mode)
-            scaled_channels: Dictionary of channel_name -> scaled_data
-            timestamp: Waveform timestamp
-        """
+        self._roi_axis_mapping = None
+        if x_axis_mode != "mz":
+            try:
+                self._roi_axis_mapping = ROIAxisMapping(waveform.mz, x_data)
+            except ValueError:
+                # A single plot interval cannot represent an ambiguous mapping.
+                pass
+        self._update_region_positions()
+
         # Get sorted channel names for consistent ordering
         channel_names = sorted(scaled_channels.keys())
 
@@ -2792,7 +2680,7 @@ class MainWindow(QMainWindow):
 
         # Update title with timestamp and excitation step info
         timestamp_str = (
-            f"Last timestamp: {timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
+            f"Last timestamp: {waveform.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
         )
         self._update_plot_title(timestamp_str)
 
@@ -2816,15 +2704,7 @@ class MainWindow(QMainWindow):
         # Save regions (always save as m/z values, not visual positions)
         regions_data = []
         for i, region in enumerate(self.regions):
-            # Use stored m/z bounds instead of visual position
-            if region in self.region_mz_bounds:
-                start, end = self.region_mz_bounds[region]
-            else:
-                # Fallback: convert visual position to m/z
-                region_values = region.getRegion()
-                start_x = float(region_values[0])  # type: ignore[arg-type]
-                end_x = float(region_values[1])  # type: ignore[arg-type]
-                start, end = self._xaxis_to_mz(start_x, end_x)
+            start, end = self.region_mz_bounds[region]
 
             name = f"Region {i+1}"
             if i < self.region_table.rowCount():
