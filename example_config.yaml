@@ -1,6 +1,5 @@
 # Example configuration file for MQTT Oscilloscope Waveform Viewer
-# This file is automatically created in your home directory as:
-# ~/.ms_viewer_config.yaml
+# Copy this file to ~/.waveform_viewer_config.yaml to use these settings.
 #
 # You can manually edit this file, but it will be overwritten when
 # the application saves its state on exit.
@@ -9,11 +8,15 @@ mqtt:
   # MQTT broker hostname or IP address
   broker_host: localhost
 
-  # MQTT broker port (default: 1883, SSL: 8883)
+  # MQTT broker port (default: 1883)
   broker_port: 1883
 
   # Topic to subscribe to for incoming waveforms
-  input_topic: oscilloscope/waveform
+  input_topic: lqt/picoscope/waveform
+
+  # Trap settings are required for m/z conversion. Collector metadata is optional.
+  trapping_parameters_topic: lqt/trapping/parameters
+  collector_parameters_topic: lqt/collector/parameters
 
   # Topic to publish to when republishing waveforms
   output_topic: oscilloscope/republish
@@ -45,7 +48,7 @@ mqtt:
 
 gui:
   # List of regions of interest
-  # Each region has a name, start time, and end time
+  # Each region has a name and start/end bounds in m/z
   regions:
   - name: "Event 1"
     start: 0.020
