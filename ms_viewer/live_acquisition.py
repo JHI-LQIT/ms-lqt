@@ -3,6 +3,7 @@
 import logging
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from time import monotonic
 
 import numpy as np
@@ -30,7 +31,7 @@ class StatisticsWorker(QThread):
     """Worker thread for calculating statistics to avoid blocking the GUI."""
 
     # Signal emitted when calculation is complete
-    calculation_complete = pyqtSignal(list, int)  # (statistics, num_averaged_waveforms)
+    calculation_complete = pyqtSignal(list, int, object)  # metrics, scan count, capture time
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,8 +91,11 @@ class StatisticsWorker(QThread):
                 scaled_waveform, self.rois
             )
 
-            # Emit result
-            self.calculation_complete.emit(statistics, num_averaged)
+            capture_time = averaged_waveform.timestamp
+            # Legacy JSON timestamps ending in Z are parsed without a timezone.
+            if capture_time.tzinfo is None:
+                capture_time = capture_time.replace(tzinfo=timezone.utc)
+            self.calculation_complete.emit(statistics, num_averaged, capture_time)
 
         except Exception as e:
             logging.error(f"Error in statistics calculation thread: {e}", exc_info=True)
@@ -133,7 +137,7 @@ class LiveAcquisitionController(QObject):
     """Own live worker scheduling on the GUI thread."""
 
     plot_ready = pyqtSignal(object, dict, str)
-    statistics_ready = pyqtSignal(list, int)
+    statistics_ready = pyqtSignal(list, int, object)
     statistics_dropped = pyqtSignal(int)
 
     def __init__(
@@ -253,9 +257,9 @@ class LiveAcquisitionController(QObject):
         )
         self._statistics_worker.start()
 
-    def _on_statistics_ready(self, statistics, scan_count):
+    def _on_statistics_ready(self, statistics, scan_count, capture_time: datetime):
         if self._accept_statistics_result and not self._closed:
-            self.statistics_ready.emit(statistics, scan_count)
+            self.statistics_ready.emit(statistics, scan_count, capture_time)
 
     def _finish_statistics(self):
         self._statistics_busy = False
