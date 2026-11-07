@@ -8,7 +8,7 @@ region management, and state persistence.
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 import pyqtgraph as pg
@@ -46,11 +46,11 @@ from PyQt5.QtWidgets import (
 from . import state_manager
 from .data_model import WaveformData
 from .exporter import build_payload, export_waveform_to_csv
+from .live_acquisition import ChannelScaling, LiveAcquisitionController
 from .mqtt_client import MqttClient
 from .roi_axis import ROIAxisMapping
 from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
 from .trapping_parameters import ExcitationStep, TrapControls
-from .waveform_averaging import average_latest_batch
 
 logger = logging.getLogger(__name__)
 
@@ -274,85 +274,6 @@ class MqttConfigDialog(QDialog):
         self.setLayout(layout)
 
 
-class StatisticsWorker(QThread):
-    """Worker thread for calculating statistics to avoid blocking the GUI."""
-
-    # Signal emitted when calculation is complete
-    calculation_complete = pyqtSignal(list, int)  # (statistics, num_averaged_waveforms)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.waveforms_to_process = None
-        self.rois = None
-        self.scaling_functions = None
-        self.statistics_calculator = None
-        self._should_stop = False
-
-    def setup_calculation(
-        self,
-        waveforms: List[WaveformData],
-        rois: List[ROIDefinition],
-        scaling_functions: Dict[str, Callable],
-        statistics_calculator: ROIStatisticsCalculator,
-    ):
-        """Set up the data for the next calculation."""
-        self.waveforms_to_process = waveforms
-        self.rois = rois
-        self.scaling_functions = scaling_functions
-        self.statistics_calculator = statistics_calculator
-        self._should_stop = False
-
-    def stop(self):
-        """Signal the worker to stop processing."""
-        self._should_stop = True
-
-    def run(self):
-        """Execute the statistics calculation in the background."""
-        if not self.waveforms_to_process or not self.rois:
-            return
-
-        try:
-            if self._should_stop:
-                return
-
-            averaged_waveform, num_averaged = average_latest_batch(
-                self.waveforms_to_process
-            )
-
-            if self._should_stop:
-                return
-
-            # Apply scaling
-            scaled_channels = {}
-            for ch_name, data in averaged_waveform.channels.items():
-                if self.scaling_functions and ch_name in self.scaling_functions:
-                    scaled_channels[ch_name] = self.scaling_functions[ch_name](data)
-                else:
-                    scaled_channels[ch_name] = data
-
-            scaled_waveform = WaveformData.from_preprocessed(
-                source=averaged_waveform,
-                channels=scaled_channels,
-            )
-
-            if self._should_stop:
-                return
-
-            # Calculate statistics
-            if not self.statistics_calculator:
-                return
-
-            statistics = self.statistics_calculator.calculate_all_statistics(
-                scaled_waveform, self.rois
-            )
-
-            # Emit result
-            self.calculation_complete.emit(statistics, num_averaged)
-
-        except Exception as e:
-            logging.error(f"Error in statistics calculation thread: {e}", exc_info=True)
-
-
 class ExportWorker(QThread):
     """Worker thread for exporting waveform data to avoid blocking the GUI."""
 
@@ -433,63 +354,6 @@ class PayloadWorker(QThread):
             logging.error(f"Error in payload building thread: {e}", exc_info=True)
 
 
-class PlotDataWorker(QThread):
-    """Worker thread for preparing plot data (scaling) to avoid blocking the GUI."""
-
-    # Signal emitted when preparation is complete
-    # Emits: (waveform, scaled_channels_dict, x_axis_mode)
-    data_ready = pyqtSignal(object, dict, object)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.waveform = None
-        self.scaling_functions = None
-        self.x_axis_mode = "mz"
-        self._should_stop = False
-
-    def setup_preparation(
-        self,
-        waveform: WaveformData,
-        scaling_functions: Dict[str, Callable],
-        x_axis_mode: str = "mz",
-    ):
-        """Set up the data for the next preparation."""
-        self.waveform = waveform
-        self.scaling_functions = scaling_functions
-        self.x_axis_mode = x_axis_mode
-        self._should_stop = False
-
-    def stop(self):
-        """Signal the worker to stop processing."""
-        self._should_stop = True
-
-    def run(self):
-        """Execute the plot data preparation in the background."""
-        if not self.waveform:
-            return
-
-        try:
-            scaled_channels = {}
-
-            # Apply scaling to each channel
-            for ch_name, data in self.waveform.channels.items():
-                if self._should_stop:
-                    return
-
-                if self.scaling_functions and ch_name in self.scaling_functions:
-                    scaled_channels[ch_name] = self.scaling_functions[ch_name](data)
-                else:
-                    scaled_channels[ch_name] = data.copy()
-
-            if self._should_stop:
-                return
-
-            self.data_ready.emit(self.waveform, scaled_channels, self.x_axis_mode)
-
-        except Exception as e:
-            logging.error(f"Error in plot data preparation thread: {e}", exc_info=True)
-
-
 class MainWindow(QMainWindow):
     """
     Main application window with waveform plotting and controls.
@@ -558,27 +422,17 @@ class MainWindow(QMainWindow):
             lambda: defaultdict(list)
         )
 
-        # Performance optimization: throttle statistics updates
-        self._waveform_counter = 0
-        self._last_statistics_update_time = datetime.now()
-
-        # Accumulate waveforms for averaging during throttle period
-        self._accumulated_waveforms: List[WaveformData] = []
-        self._num_averaged_waveforms = 0  # Track how many waveforms were averaged
-
-        # Statistics calculation worker thread
-        self._statistics_worker = StatisticsWorker(self)
-        self._statistics_worker.calculation_complete.connect(
-            self._on_statistics_calculated
+        self._num_averaged_waveforms = 0
+        preferences = self.state["preferences"]
+        self._acquisition = LiveAcquisitionController(
+            self.statistics_calculator,
+            statistics_interval=preferences.get("statistics_update_interval", 10),
+            minimum_interval_ms=preferences.get("statistics_update_min_interval_ms", 100),
+            max_pending_scans=preferences.get("statistics_max_pending_scans", 64),
+            parent=self,
         )
-        self._statistics_worker.finished.connect(self._on_statistics_finished)
-        self._statistics_calculation_pending = False
-
-        # Plot data preparation worker thread
-        self._plot_data_worker = PlotDataWorker(self)
-        self._plot_data_worker.data_ready.connect(self._on_plot_data_ready)
-        self._plot_data_pending = False
-        self._pending_plot_waveform = None
+        self._acquisition.plot_ready.connect(self._on_plot_data_ready)
+        self._acquisition.statistics_ready.connect(self._on_statistics_calculated)
 
         # Export worker thread (for CSV exports with large data)
         self._export_worker = ExportWorker(self)
@@ -593,14 +447,6 @@ class MainWindow(QMainWindow):
         self.max_history_points = self.state["preferences"].get(
             "max_history_points", 100
         )
-        # Statistics update throttling (for high-rate data transfers)
-        self._statistics_update_interval = self.state["preferences"].get(
-            "statistics_update_interval", 10
-        )  # Update every N waveforms
-        self._statistics_update_min_interval = (
-            self.state["preferences"].get("statistics_update_min_interval_ms", 100)
-            / 1000.0
-        )  # Convert ms to seconds
         self.channel_colors = self.state["preferences"].get(
             "channel_colors",
             [
@@ -777,6 +623,13 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Not connected")
+        self._statistics_dropped_label = QLabel()
+        self._statistics_dropped_label.setToolTip(
+            "Oldest pending ROI scans discarded when the statistics buffer filled."
+        )
+        self.status_bar.addPermanentWidget(self._statistics_dropped_label)
+        self._acquisition.statistics_dropped.connect(self._show_statistics_drops)
+        self._show_statistics_drops(0)
 
     def _setup_plots(self):
         """Set up side-by-side plots with movable divider."""
@@ -1030,7 +883,10 @@ class MainWindow(QMainWindow):
         self.state["gui"]["x_axis_mode"] = x_axis_mode
         state_manager.save_state(self.state_path, self.state)
 
-        # Update plot if we have data
+        # Hide markers until the plot and its ROI mapping use the new axis.
+        self._roi_axis_mapping = None
+        for region in self.regions:
+            region.hide()
         if self.current_waveform:
             self._update_plot(self.current_waveform)
         else:
@@ -1237,24 +1093,11 @@ class MainWindow(QMainWindow):
             self._update_plot(self.current_waveform)
             self._calculate_and_display_statistics()
 
-    def _apply_channel_scaling(self, channel_name: str, data: np.ndarray) -> np.ndarray:
-        """
-        Apply scaling to channel data.
-
-        Args:
-            channel_name: Name of the channel
-            data: Original data array
-
-        Returns:
-            Scaled data array: y := Gain * (y - Offset)
-        """
-        if channel_name not in self.channel_scaling:
-            return data
-
-        gain = self.channel_scaling[channel_name]["gain"]
-        offset = self.channel_scaling[channel_name]["offset"]
-
-        return gain * (data - offset)
+    def _channel_scaling_snapshot(self) -> ChannelScaling:
+        return {
+            name: (settings["gain"], settings["offset"])
+            for name, settings in self.channel_scaling.items()
+        }
 
     def _get_excitation_step_info(self) -> str:
         """Get formatted excitation step information for plot title."""
@@ -1830,12 +1673,7 @@ class MainWindow(QMainWindow):
         if self.current_waveform is None or len(self.regions) == 0:
             self.current_statistics = []
             self._update_statistics_table()
-            self._accumulated_waveforms.clear()
-            return
-
-        # Skip if a calculation is already in progress
-        if self._statistics_worker.isRunning():
-            self._statistics_calculation_pending = True
+            self._acquisition.clear_statistics()
             return
 
         # Build ROI definitions from current regions using stored m/z bounds
@@ -1852,32 +1690,12 @@ class MainWindow(QMainWindow):
 
             rois.append(ROIDefinition(name=name, start_mz=start, end_mz=end))
 
-        # Build scaling functions dictionary with captured scaling parameters (thread-safe)
-        scaling_functions = {}
-        for ch_name in self.current_waveform.channels.keys():
-            if ch_name in self.channel_scaling:
-                # Capture scaling parameters in the lambda closure
-                gain = self.channel_scaling[ch_name]["gain"]
-                offset = self.channel_scaling[ch_name]["offset"]
-                scaling_functions[ch_name] = lambda data, g=gain, o=offset: g * (
-                    data - o
-                )
-            else:
-                # No scaling - return data as-is
-                scaling_functions[ch_name] = lambda data: data
-
-        # Copy accumulated waveforms for thread safety
-        waveforms_copy = self._accumulated_waveforms.copy() or [self.current_waveform]
-
-        # Clear accumulated waveforms now (don't wait for thread)
-        self._accumulated_waveforms.clear()
-
-        # Start calculation in background thread
-        self._statistics_worker.setup_calculation(
-            waveforms_copy, rois, scaling_functions, self.statistics_calculator
+        self._acquisition.request_statistics(
+            self.current_waveform, rois, self._channel_scaling_snapshot()
         )
-        self._statistics_calculation_pending = False
-        self._statistics_worker.start()
+
+    def _show_statistics_drops(self, count: int):
+        self._statistics_dropped_label.setText(f"ROI scans dropped: {count}")
 
     def _on_statistics_calculated(
         self, statistics: List[ROIStatistics], num_averaged: int
@@ -1895,13 +1713,6 @@ class MainWindow(QMainWindow):
         # Publish statistics to MQTT
         self._publish_statistics()
 
-    def _on_statistics_finished(self):
-        """Run any calculation queued while the worker was busy."""
-        if self._statistics_calculation_pending:
-            self._statistics_calculation_pending = False
-            if len(self.regions) > 0 and self.current_waveform is not None:
-                self._calculate_and_display_statistics()
-
     def _on_plot_data_ready(
         self,
         waveform: WaveformData,
@@ -1911,30 +1722,6 @@ class MainWindow(QMainWindow):
         """Handle completion of plot data preparation from worker thread."""
         if x_axis_mode == self.state["gui"].get("x_axis_mode", "mz"):
             self._update_plot_with_scaled_data(waveform, scaled_channels, x_axis_mode)
-
-        # If another preparation is pending, trigger it
-        if self._plot_data_pending and self._pending_plot_waveform is not None:
-            self._plot_data_pending = False
-            waveform = self._pending_plot_waveform
-            self._pending_plot_waveform = None
-
-            # Build scaling functions
-            scaling_functions = {}
-            for ch_name in waveform.channels.keys():
-                if ch_name in self.channel_scaling:
-                    gain = self.channel_scaling[ch_name]["gain"]
-                    offset = self.channel_scaling[ch_name]["offset"]
-                    scaling_functions[ch_name] = lambda data, g=gain, o=offset: g * (
-                        data - o
-                    )
-                else:
-                    scaling_functions[ch_name] = lambda data: data.copy()
-
-            x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
-            self._plot_data_worker.setup_preparation(
-                waveform, scaling_functions, x_axis_mode
-            )
-            self._plot_data_worker.start()
 
     def _on_export_complete(self, success: bool, message: str):
         """Handle completion of export from worker thread."""
@@ -1969,13 +1756,8 @@ class MainWindow(QMainWindow):
 
     def _calculate_and_display_statistics_throttled(self):
         """Throttled version of statistics calculation for interactive updates."""
-        now = datetime.now()
-        time_since_last = (now - self._last_statistics_update_time).total_seconds()
-
-        # Only update if enough time has passed
-        if time_since_last >= self._statistics_update_min_interval:
+        if self._acquisition.statistics_refresh_due():
             self._calculate_and_display_statistics()
-            self._last_statistics_update_time = now
 
     def _update_statistics_table(self):
         """Update the statistics table with current statistics."""
@@ -2506,7 +2288,6 @@ class MainWindow(QMainWindow):
         """Handle received waveform data."""
         self.current_waveform = waveform
         self.original_waveform = waveform  # Store original unmodified waveform
-        self._waveform_counter += 1
 
         # Update scaling controls for new channels (only if changed)
         if (
@@ -2519,57 +2300,9 @@ class MainWindow(QMainWindow):
         # Update excitation step spinbox with only active steps
         self._update_excitation_step_spinbox(waveform.trapping_parameters)
 
-        # Update plot - use threaded scaling for large waveforms
-        max_samples = max(len(data) for data in waveform.channels.values())
-        use_threaded = max_samples > 100000  # Use threading for >100k points
-
-        if use_threaded:
-            # Prepare plot data in background thread
-            if not self._plot_data_worker.isRunning():
-                # Build scaling functions dictionary with captured parameters
-                scaling_functions = {}
-                for ch_name in waveform.channels.keys():
-                    if ch_name in self.channel_scaling:
-                        gain = self.channel_scaling[ch_name]["gain"]
-                        offset = self.channel_scaling[ch_name]["offset"]
-                        scaling_functions[ch_name] = (
-                            lambda data, g=gain, o=offset: g * (data - o)
-                        )
-                    else:
-                        scaling_functions[ch_name] = lambda data: data.copy()
-
-                x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
-                self._plot_data_worker.setup_preparation(
-                    waveform, scaling_functions, x_axis_mode
-                )
-                self._plot_data_worker.start()
-            else:
-                # Worker is busy, mark as pending
-                self._plot_data_pending = True
-                self._pending_plot_waveform = waveform
-        else:
-            # Small waveform - process immediately
-            self._update_plot(waveform)
-
-        # Accumulate waveforms and calculate statistics (throttled for performance)
-        if len(self.regions) > 0:
-            # Add current waveform to accumulation buffer
-            self._accumulated_waveforms.append(waveform)
-
-            now = datetime.now()
-            time_since_last_update = (
-                now - self._last_statistics_update_time
-            ).total_seconds()
-
-            should_update = (
-                self._waveform_counter % self._statistics_update_interval == 0
-                or time_since_last_update >= self._statistics_update_min_interval
-            )
-
-            if should_update:
-                # Calculate statistics from averaged accumulated waveforms
-                self._calculate_and_display_statistics()
-                self._last_statistics_update_time = now
+        self._update_plot(waveform, redraw=False)
+        if self._acquisition.record_waveform(waveform, has_regions=bool(self.regions)):
+            self._calculate_and_display_statistics()
 
         # Enable action buttons (only on first waveform)
         if not self.export_csv_btn.isEnabled():
@@ -2620,14 +2353,13 @@ class MainWindow(QMainWindow):
         logger.error(f"Output MQTT error: {message}")
         self.status_bar.showMessage(f"Output broker error: {message}", 10000)
 
-    def _update_plot(self, waveform: WaveformData):
-        """Scale and plot a waveform synchronously."""
-        scaled_channels = {
-            name: self._apply_channel_scaling(name, data)
-            for name, data in waveform.channels.items()
-        }
-        x_axis_mode = self.state["gui"].get("x_axis_mode", "mz")
-        self._update_plot_with_scaled_data(waveform, scaled_channels, x_axis_mode)
+    def _update_plot(self, waveform: WaveformData, *, redraw: bool = True):
+        self._acquisition.request_plot(
+            waveform,
+            self._channel_scaling_snapshot(),
+            self.state["gui"].get("x_axis_mode", "mz"),
+            redraw=redraw,
+        )
 
     def _update_plot_with_scaled_data(
         self,
@@ -2686,6 +2418,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):  # type: ignore[override]
         """Handle window close event - save state."""
+        self._acquisition.close()
         self._export_worker.stop()
         self._export_worker.wait()
 

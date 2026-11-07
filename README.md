@@ -44,6 +44,10 @@ python -m ms_viewer.mock_publisher --broker 127.0.0.1 --port 18884 --topic lqt/p
 
 The viewer should show two traces on the m/z axis. Use **Add Region** to see ROI statistics or **Export to CSV...** to save the spectrum. Stop the publisher and the demo broker with Ctrl+C in their respective terminals.
 
+## Live acquisition
+
+While a large plot frame is being prepared, the viewer keeps only the latest pending frame. ROI statistics can average multiple scans. The viewer queues up to 64 scans for the next ROI calculation by default and drops the oldest pending scan when the queue fills. The status bar shows the number of ROI scans dropped since startup. Set `preferences.statistics_max_pending_scans` in the viewer configuration to change the limit.
+
 ## Run tests
 
 ```sh

@@ -87,6 +87,9 @@ preferences:
   # This prevents statistics from updating too frequently
   statistics_update_min_interval_ms: 100
 
+  # Maximum ROI scans waiting to be processed. Drops the oldest scan when full.
+  statistics_max_pending_scans: 64
+
   # Colors for waveform channels (RGB values 0-255)
   channel_colors:
   - [ 255, 0, 0 ] # Red

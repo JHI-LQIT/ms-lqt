@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from ms_viewer.gui import StatisticsWorker
+from ms_viewer.live_acquisition import StatisticsWorker
 from ms_viewer.roi_statistics import ROIDefinition
 from ms_viewer.trapping_parameters import ExcitationStep, TrapControls
 from ms_viewer.waveform_averaging import average_latest_batch
