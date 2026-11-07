@@ -50,7 +50,6 @@ from .live_acquisition import ChannelScaling, LiveAcquisitionController
 from .mqtt_client import MqttClient
 from .roi_axis import ROIAxisMapping
 from .roi_statistics import ROIDefinition, ROIStatistics, ROIStatisticsCalculator
-from .trapping_parameters import ExcitationStep, TrapControls
 
 logger = logging.getLogger(__name__)
 
@@ -1102,11 +1101,12 @@ class MainWindow(QMainWindow):
     def _get_excitation_step_info(self) -> str:
         """Get formatted excitation step information for plot title."""
         # Try to get trapping parameters from waveform or MQTT client
-        if self.current_waveform is not None:
-            trapping_params: TrapControls = self.current_waveform.trapping_parameters
-        elif self.mqtt_client.trapping_parameters is not None:
-            trapping_params: TrapControls = self.mqtt_client.trapping_parameters
-        else:
+        trapping_params = (
+            self.current_waveform.trapping_parameters
+            if self.current_waveform is not None
+            else self.mqtt_client.trapping_parameters
+        )
+        if trapping_params is None:
             return ""
 
         # Check if there are any active steps
@@ -2080,18 +2080,12 @@ class MainWindow(QMainWindow):
         """Update status bar with connection info and trapping parameters status."""
         parts = [message]
 
-        if self.trapping_params_received:
+        trapping_params = self.mqtt_client.trapping_parameters
+        if self.trapping_params_received and trapping_params is not None:
             parts.append("Trapping params: ✓")
-            # Add active step count
             num_active = len(self._active_step_indices)
-            total_steps = (
-                len(self._active_step_indices)
-                if self.mqtt_client.trapping_parameters
-                else 0
-            )
-            if self.mqtt_client.trapping_parameters:
-                total_steps = len(self.mqtt_client.trapping_parameters.excitation_steps)
-                parts.append(f"Active steps: {num_active}/{total_steps}")
+            total_steps = len(trapping_params.excitation_steps)
+            parts.append(f"Active steps: {num_active}/{total_steps}")
         else:
             parts.append("Trapping params: ✗")
 
@@ -2100,11 +2094,11 @@ class MainWindow(QMainWindow):
 
     def _get_active_step_indices(self) -> List[int]:
         """Get list of indices for active excitation steps."""
-        trapping_params = None
-        if self.current_waveform is not None:
-            trapping_params = self.current_waveform.trapping_parameters
-        elif self.mqtt_client.trapping_parameters is not None:
-            trapping_params = self.mqtt_client.trapping_parameters
+        trapping_params = (
+            self.current_waveform.trapping_parameters
+            if self.current_waveform is not None
+            else self.mqtt_client.trapping_parameters
+        )
 
         if trapping_params is None:
             return []

@@ -23,6 +23,8 @@ Open **MQTT Configuration**, set the broker host and port, then click **Apply & 
 | Trapping parameters | `lqt/trapping/parameters` | JSON trap settings and excitation steps. Required to calculate the spectrum. |
 | Collector parameters | `lqt/collector/parameters` | Optional JSON metadata included in CSV exports. |
 
+After a reconnect, the viewer waits for trap settings from the new MQTT connection before converting incoming waveforms to m/z. Broker-retained settings can supply these automatically. Collector metadata stays optional, and raw waveform forwarding can resume immediately.
+
 The viewer saves broker settings, ROI bounds, and display preferences in `~/.waveform_viewer_config.yaml`. Close the viewer before editing this file by hand. See [example_config.yaml](example_config.yaml) for additional settings.
 
 ## Try it without hardware
