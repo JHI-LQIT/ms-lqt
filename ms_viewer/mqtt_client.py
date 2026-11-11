@@ -173,9 +173,15 @@ class MqttClient(QObject):
             self._client.loop_stop()
             self._client.disconnect()
             self._client = None
-            self._connected = False
-            self._subscribed = False
+            self._reset_connection_state()
             self.connection_state_changed.emit(False, "Disconnected")
+
+    def _reset_connection_state(self):
+        """Discard receive metadata from the connection that just ended."""
+        self._connected = False
+        self._subscribed = False
+        self.trapping_parameters = None
+        self.collector_metadata = None
 
     def subscribe(self):
         """
@@ -296,8 +302,7 @@ class MqttClient(QObject):
         """
         Callback when disconnected from broker.
         """
-        self._connected = False
-        self._subscribed = False
+        self._reset_connection_state()
 
         if rc == 0:
             msg = "Disconnected from broker"
@@ -328,34 +333,24 @@ class MqttClient(QObject):
             # their own, synchronized experiment parameters.
             self.raw_waveform_received.emit(bytes(message.payload))
             try:
-                # Parse the payload
-                if not self.trapping_parameters:
+                trapping_parameters = self.trapping_parameters
+                if trapping_parameters is None:
                     return
 
-                # Check if the selected excitation step is active
-                if (
-                    self.selected_excitation_step < 0
-                    or self.selected_excitation_step
-                    >= len(self.trapping_parameters.excitation_steps)
-                ):
-                    logger.warning(
-                        f"Selected excitation step {self.selected_excitation_step} is out of range"
-                    )
+                step_index = self.selected_excitation_step
+                steps = trapping_parameters.excitation_steps
+                if not 0 <= step_index < len(steps):
+                    logger.warning("Selected excitation step %d is out of range", step_index)
                     return
 
-                selected_step = self.trapping_parameters.excitation_steps[
-                    self.selected_excitation_step
-                ]
-                if not selected_step.step_active:
-                    logger.debug(
-                        f"Skipping waveform: selected step {self.selected_excitation_step} is not active"
-                    )
+                if not steps[step_index].step_active:
+                    logger.debug("Skipping waveform: selected step %d is not active", step_index)
                     return
 
                 waveform = parse_payload(
                     message.payload,
-                    self.trapping_parameters,
-                    selected_excitation_step=self.selected_excitation_step,
+                    trapping_parameters,
+                    selected_excitation_step=step_index,
                     collector_metadata=self.collector_metadata,
                 )
 
