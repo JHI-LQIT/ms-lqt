@@ -709,10 +709,12 @@ class MainWindow(QMainWindow):
         metrics_layout.addWidget(clear_btn)
 
         # PyQtGraph plot widget – used directly in the splitter
-        self.stats_plot = pg.PlotWidget()
+        self.stats_plot = pg.PlotWidget(
+            axisItems={"bottom": pg.DateAxisItem(orientation="bottom", utcOffset=0)}
+        )
         self.stats_plot.setBackground("w")
         self.stats_plot.setLabel("left", "Value")
-        self.stats_plot.setLabel("bottom", "Time")
+        self.stats_plot.setLabel("bottom", "Waveform capture time (UTC)")
         self.stats_plot.showGrid(x=True, y=True, alpha=0.3)
         self.stats_plot.addLegend()
         self.stats_plot.setTitle("Statistics Over Time")
@@ -1934,11 +1936,7 @@ class MainWindow(QMainWindow):
                 for key, data_points in self.statistics_history[stat_name].items():
                     if data_points:
                         has_data = True
-                        # Convert timestamps to seconds since first timestamp for plotting
-                        first_time = data_points[0][0]
-                        times = [
-                            (dp[0] - first_time).total_seconds() for dp in data_points
-                        ]
+                        times = [capture_time.timestamp() for capture_time, _ in data_points]
                         values = [dp[1] for dp in data_points]
 
                         curve_key = f"{stat_name}:{key}"
