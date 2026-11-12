@@ -651,7 +651,7 @@ class MainWindow(QMainWindow):
         """Set up the PyQtGraph plot widget."""
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
-        self.plot_widget.setLabel("left", "Amplitude", units="mV")
+        self.plot_widget.setLabel("left", "Amplitude", units="V")
 
         # Set x-axis label based on saved state
         x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
@@ -2382,16 +2382,17 @@ class MainWindow(QMainWindow):
         # Update or create curves
         for i, ch_name in enumerate(channel_names):
             color = tuple(self.channel_colors[i % len(self.channel_colors)])
-            scaled_data = scaled_channels[ch_name]
+            # Plot in volts so the axis can apply a single SI prefix.
+            voltage_v = scaled_channels[ch_name] * 1e-3
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(x_data, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, voltage_v)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
                 curve = self.plot_widget.plot(
-                    x_data, scaled_data, pen=pen, name=ch_name
+                    x_data, voltage_v, pen=pen, name=ch_name
                 )
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)

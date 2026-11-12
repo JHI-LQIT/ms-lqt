@@ -65,13 +65,17 @@ def test_roi_markers_follow_rendered_axis_and_preserve_mz(tmp_path, monkeypatch)
         window.state["gui"]["x_axis_mode"] = "frequency"
         window._on_plot_data_ready(waveform, channels, "frequency")
         assert region.getRegion() == (15, 40)
+        assert window.plot_widget.getAxis("left").labelUnits == "V"
+        np.testing.assert_allclose(window.plot_curves["A"].yData, [0.001, 0.002, 0.003])
 
         region.setRegion((10, 20))
         assert window.region_mz_bounds[region] == (200, 400)
 
+        channels["A"] = np.array([1000, 2000, 3000])
         waveform.f_AC_kHz = np.array([120, 40, 20])
         window._on_plot_data_ready(waveform, channels, "frequency")
         assert region.getRegion() == (20, 40)
+        np.testing.assert_allclose(window.plot_curves["A"].yData, [1, 2, 3])
         assert window.region_mz_bounds[region] == (200, 400)
 
         window.state["gui"]["x_axis_mode"] = "rf_amplitude"
