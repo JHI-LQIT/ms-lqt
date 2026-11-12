@@ -1238,6 +1238,7 @@ class MainWindow(QMainWindow):
             name: Region name
         """
         region = pg.LinearRegionItem(values=[start_mz, end_mz], brush=(100, 100, 255, 50))
+        region.setToolTip(name)
         self.plot_widget.addItem(region)
         self.regions.append(region)
         self.region_mz_bounds[region] = (start_mz, end_mz)
@@ -1279,7 +1280,7 @@ class MainWindow(QMainWindow):
 
     def _on_region_table_cell_changed(self, row: int, column: int):
         """
-        Handle changes to table cells - update region position when user edits values.
+        Update the plotted region when its name or bounds are edited.
 
         Args:
             row: Row that was changed
@@ -1290,8 +1291,10 @@ class MainWindow(QMainWindow):
 
         region = self.regions[row]
 
-        # Only update if start or end m/z was changed
-        if column == 1 or column == 2:
+        if column == 0:
+            name_item = self.region_table.item(row, 0)
+            region.setToolTip(name_item.text() if name_item is not None else "")
+        elif column in (1, 2):
             try:
                 # Get current values from table
                 start_item = self.region_table.item(row, 1)
