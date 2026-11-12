@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
+from ms_viewer.data_model import encode_payload
 from ms_viewer.mqtt_client import MqttClient
 from ms_viewer.trapping_parameters import TrapControls
 
@@ -76,3 +77,44 @@ def test_reconnect_waits_for_trap_settings_without_blocking_raw_forwarding(autom
     receive(client.collector_parameters_topic, b'{"run":2}')
     receive(client.input_topic, waveform)
     assert calibrated[2].collector_metadata == '{"run":2}'
+
+
+def test_waveform_units_from_mqtt5_user_properties():
+    client = MqttClient()
+    trap = TrapControls()
+    trap.basic_controls.injection_duration_ms = 0
+    client.trapping_parameters = trap
+    received, forwarded = [], []
+    client.waveform_received.connect(received.append)
+    client.waveform_for_forwarding.connect(
+        lambda payload, units: forwarded.append((payload, units))
+    )
+
+    def receive(payload, units):
+        message = SimpleNamespace(
+            topic=client.input_topic,
+            payload=payload,
+            properties=SimpleNamespace(UserProperty=list(units.items())),
+        )
+        client._on_message(None, None, message)
+
+    json_payload = json.dumps({
+        "t0": 2,
+        "dt": 1,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "channels": {"A": [1, 2, 3, 4]},
+    }).encode()
+    receive(json_payload, {"sample_unit": "V", "time_unit": "ms"})
+    assert received[0].sample_unit == "V"
+    assert received[0].t0 == pytest.approx(0.002)
+    assert received[0].dt == pytest.approx(0.001)
+
+    binary_payload = encode_payload(received[0])
+    units = {"sample_unit": "V", "time_unit": "s"}
+    receive(binary_payload, units)
+    assert received[1].sample_unit == "V"
+    assert received[1].dt == pytest.approx(0.001)
+    assert forwarded[-1] == (binary_payload, units)
+
+    receive(binary_payload, {})
+    assert received[2].sample_unit == "mV"
