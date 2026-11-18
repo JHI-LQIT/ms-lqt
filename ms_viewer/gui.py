@@ -487,7 +487,7 @@ class MainWindow(QMainWindow):
         self.mqtt_client.set_selected_excitation_step(self.selected_excitation_step)
 
         # Connect MQTT signals
-        self.mqtt_client.raw_waveform_received.connect(
+        self.mqtt_client.waveform_for_forwarding.connect(
             self._auto_republish_raw_payload
         )
         self.mqtt_client.waveform_received.connect(self.on_waveform_received)
@@ -651,7 +651,7 @@ class MainWindow(QMainWindow):
         """Set up the PyQtGraph plot widget."""
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
-        self.plot_widget.setLabel("left", "Amplitude", units="mV")
+        self.plot_widget.setLabel("left", "Amplitude")
 
         # Set x-axis label based on saved state
         x_axis_mode = self.state.get("gui", {}).get("x_axis_mode", "mz")
@@ -709,10 +709,12 @@ class MainWindow(QMainWindow):
         metrics_layout.addWidget(clear_btn)
 
         # PyQtGraph plot widget – used directly in the splitter
-        self.stats_plot = pg.PlotWidget()
+        self.stats_plot = pg.PlotWidget(
+            axisItems={"bottom": pg.DateAxisItem(orientation="bottom", utcOffset=0)}
+        )
         self.stats_plot.setBackground("w")
         self.stats_plot.setLabel("left", "Value")
-        self.stats_plot.setLabel("bottom", "Time")
+        self.stats_plot.setLabel("bottom", "Waveform capture time (UTC)")
         self.stats_plot.showGrid(x=True, y=True, alpha=0.3)
         self.stats_plot.addLegend()
         self.stats_plot.setTitle("Statistics Over Time")
@@ -1236,6 +1238,7 @@ class MainWindow(QMainWindow):
             name: Region name
         """
         region = pg.LinearRegionItem(values=[start_mz, end_mz], brush=(100, 100, 255, 50))
+        region.setToolTip(name)
         self.plot_widget.addItem(region)
         self.regions.append(region)
         self.region_mz_bounds[region] = (start_mz, end_mz)
@@ -1277,7 +1280,7 @@ class MainWindow(QMainWindow):
 
     def _on_region_table_cell_changed(self, row: int, column: int):
         """
-        Handle changes to table cells - update region position when user edits values.
+        Update the plotted region when its name or bounds are edited.
 
         Args:
             row: Row that was changed
@@ -1288,8 +1291,10 @@ class MainWindow(QMainWindow):
 
         region = self.regions[row]
 
-        # Only update if start or end m/z was changed
-        if column == 1 or column == 2:
+        if column == 0:
+            name_item = self.region_table.item(row, 0)
+            region.setToolTip(name_item.text() if name_item is not None else "")
+        elif column in (1, 2):
             try:
                 # Get current values from table
                 start_item = self.region_table.item(row, 1)
@@ -1623,6 +1628,7 @@ class MainWindow(QMainWindow):
             )
             return
 
+        units = {"sample_unit": self.current_waveform.sample_unit, "time_unit": "s"}
         # Check if we should use threaded payload building for large waveforms
         max_samples = max(len(data) for data in self.current_waveform.channels.values())
         use_threaded = max_samples > 100000  # Use threading for >100k points
@@ -1636,6 +1642,7 @@ class MainWindow(QMainWindow):
                 self._pending_republish = True
                 self._republish_client = client_to_use
                 self._republish_topic = topic_to_use
+                self._republish_units = units
             else:
                 QMessageBox.warning(
                     self,
@@ -1646,14 +1653,14 @@ class MainWindow(QMainWindow):
             # Small waveform - build and publish immediately
             payload = build_payload(self.current_waveform)
             if client_to_use is not None:  # Type guard
-                client_to_use.publish(topic_to_use, payload)
+                client_to_use.publish(topic_to_use, payload, units=units)
                 broker_name = "output broker" if use_output_broker else "primary broker"
                 self.status_bar.showMessage(
                     f"Waveform republished to {broker_name}", 3000
                 )
 
-    @pyqtSlot(bytes)
-    def _auto_republish_raw_payload(self, payload: bytes):
+    @pyqtSlot(bytes, object)
+    def _auto_republish_raw_payload(self, payload: bytes, units=None):
         """Forward the original PicoScope payload to the configured output broker."""
         if not self.state["mqtt"].get("auto_republish_waveforms", True):
             return
@@ -1665,7 +1672,10 @@ class MainWindow(QMainWindow):
         topic = self.state["mqtt"].get(
             "output_broker_output_topic", "lqt/lqt_ms/republish"
         )
-        self.mqtt_output_client.publish(topic, payload)
+        if units:
+            self.mqtt_output_client.publish(topic, payload, units=units)
+        else:
+            self.mqtt_output_client.publish(topic, payload)
         logger.debug("Automatically forwarded raw waveform to %s", topic)
 
     def _calculate_and_display_statistics(self):
@@ -1747,7 +1757,7 @@ class MainWindow(QMainWindow):
             topic = getattr(self, "_republish_topic", self.mqtt_client.output_topic)
 
             # Publish the payload
-            client.publish(topic, payload)
+            client.publish(topic, payload, units=self._republish_units)
 
             # Determine which broker was used for status message
             use_output = client == self.mqtt_output_client
@@ -1934,11 +1944,7 @@ class MainWindow(QMainWindow):
                 for key, data_points in self.statistics_history[stat_name].items():
                     if data_points:
                         has_data = True
-                        # Convert timestamps to seconds since first timestamp for plotting
-                        first_time = data_points[0][0]
-                        times = [
-                            (dp[0] - first_time).total_seconds() for dp in data_points
-                        ]
+                        times = [capture_time.timestamp() for capture_time, _ in data_points]
                         values = [dp[1] for dp in data_points]
 
                         curve_key = f"{stat_name}:{key}"
@@ -2378,19 +2384,33 @@ class MainWindow(QMainWindow):
                 self.plot_widget.removeItem(self.plot_curves[ch_name])
                 del self.plot_curves[ch_name]
 
+        # Normalize voltage to volts for PyQtGraph's automatic SI prefixes.
+        sample_unit = waveform.sample_unit
+        voltage_scale = {
+            "V": 1.0, "mV": 1e-3, "uV": 1e-6, "µV": 1e-6,
+            "μV": 1e-6, "nV": 1e-9, "kV": 1e3,
+        }.get(sample_unit)
+        display_unit = "V" if voltage_scale is not None else sample_unit
+        axis = self.plot_widget.getAxis("left")
+        if axis.labelUnits != display_unit:
+            axis.enableAutoSIPrefix(voltage_scale is not None)
+            self.plot_widget.setLabel("left", "Amplitude", units=display_unit)
+
         # Update or create curves
         for i, ch_name in enumerate(channel_names):
             color = tuple(self.channel_colors[i % len(self.channel_colors)])
-            scaled_data = scaled_channels[ch_name]
+            plot_data = scaled_channels[ch_name]
+            if voltage_scale is not None and voltage_scale != 1.0:
+                plot_data = plot_data * voltage_scale
 
             if ch_name in self.plot_curves:
                 # Update existing curve
-                self.plot_curves[ch_name].setData(x_data, scaled_data)
+                self.plot_curves[ch_name].setData(x_data, plot_data)
             else:
                 # Create new curve
                 pen = pg.mkPen(color=color, width=2)
                 curve = self.plot_widget.plot(
-                    x_data, scaled_data, pen=pen, name=ch_name
+                    x_data, plot_data, pen=pen, name=ch_name
                 )
                 curve.setDownsampling(auto=True)
                 curve.setClipToView(True)

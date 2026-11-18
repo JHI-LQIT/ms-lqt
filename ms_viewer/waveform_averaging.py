@@ -13,6 +13,7 @@ def _same_acquisition(reference: WaveformData, waveform: WaveformData) -> bool:
         waveform.selected_excitation_step != reference.selected_excitation_step
         or waveform.t0 != reference.t0
         or waveform.dt != reference.dt
+        or waveform.sample_unit != reference.sample_unit
         or waveform.channels.keys() != reference.channels.keys()
     ):
         return False

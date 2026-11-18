@@ -97,7 +97,7 @@ def test_statistics_worker_reports_actual_number_of_scans_used():
     np.testing.assert_array_equal(calculated_waveform.channels["A"], 4)
 
 
-def test_history_and_mqtt_use_batch_timestamp_when_newer_waveform_arrives(
+def test_statistics_outputs_use_batch_timestamp_when_newer_waveform_arrives(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -132,6 +132,7 @@ def test_history_and_mqtt_use_batch_timestamp_when_newer_waveform_arrives(
     capture_time = last_in_batch.timestamp
     last_in_batch.timestamp = capture_time.replace(tzinfo=None)
     try:
+        window.stats_checkboxes["mean"].setChecked(True)
         window._add_region_visual(first.mz[0], first.mz[-1], "peak")
         window.on_waveform_received(first)
         window.on_waveform_received(last_in_batch)
@@ -152,6 +153,9 @@ def test_history_and_mqtt_use_batch_timestamp_when_newer_waveform_arrives(
         assert payload["timestamp"] == capture_time.isoformat()
         assert payload["num_averaged_waveforms"] == 2
         assert window.statistics_history["mean"]["A:peak"] == [(capture_time, 3)]
+        curve = window.stats_plot_curves["mean:A:peak"]
+        np.testing.assert_array_equal(curve.xData, [capture_time.timestamp()])
+        np.testing.assert_array_equal(curve.yData, [3])
         assert window.current_waveform is newer
     finally:
         release.set()

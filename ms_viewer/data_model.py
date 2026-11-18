@@ -108,11 +108,17 @@ def parse_trapping_parameters(payload_bytes: bytes) -> TrapControls:
             raise PayloadParseError(f"Invalid parameter value in legacy format: {e}")
 
 
+_TIME_UNIT_SECONDS = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "µs": 1e-6, "μs": 1e-6, "ns": 1e-9}
+
+
 def parse_payload(
     payload_bytes: bytes,
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
     collector_metadata: Optional[str] = None,
+    *,
+    sample_unit: str = "mV",
+    time_unit: str = "s",
 ) -> WaveformData:
     """
     Parse MQTT payload bytes into a WaveformData object.
@@ -129,6 +135,8 @@ def parse_payload(
         trapping_parameters: TrapControls with basic controls and excitation steps
         selected_excitation_step: Index of the excitation step to use (default: 0)
         collector_metadata: Optional JSON metadata from collector parameters topic
+        sample_unit: Unit shared by all channel samples
+        time_unit: Unit of t0 and dt, converted to seconds on ingest
 
     Returns:
         WaveformData: Parsed waveform data
@@ -136,6 +144,9 @@ def parse_payload(
     Raises:
         PayloadParseError: If payload is malformed or validation fails
     """
+    if time_unit not in _TIME_UNIT_SECONDS:
+        raise PayloadParseError(f"Unsupported waveform time unit: {time_unit!r}")
+
     # Check if payload is binary or JSON
     if len(payload_bytes) >= 4 and payload_bytes[:4] == b"WAVE":
         return _parse_binary_payload(
@@ -143,6 +154,8 @@ def parse_payload(
             trapping_parameters,
             selected_excitation_step,
             collector_metadata,
+            sample_unit=sample_unit,
+            time_unit=time_unit,
         )
     else:
         return _parse_json_payload(
@@ -150,6 +163,8 @@ def parse_payload(
             trapping_parameters,
             selected_excitation_step,
             collector_metadata,
+            sample_unit=sample_unit,
+            time_unit=time_unit,
         )
 
 
@@ -158,6 +173,9 @@ def _parse_json_payload(
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
     collector_metadata: Optional[str] = None,
+    *,
+    sample_unit: str = "mV",
+    time_unit: str = "s",
 ) -> WaveformData:
     """
     Parse JSON-encoded MQTT payload.
@@ -276,13 +294,14 @@ def _parse_json_payload(
     # Create and return WaveformData
     try:
         return WaveformData(
-            t0=t0,
-            dt=dt,
+            t0=t0 * _TIME_UNIT_SECONDS[time_unit],
+            dt=dt * _TIME_UNIT_SECONDS[time_unit],
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
             selected_excitation_step=selected_excitation_step,
             collector_metadata=collector_metadata,
+            sample_unit=sample_unit,
         )
     except ValueError as e:
         raise PayloadParseError(f"Failed to create WaveformData: {e}")
@@ -293,6 +312,9 @@ def _parse_binary_payload(
     trapping_parameters: TrapControls,
     selected_excitation_step: int = 0,
     collector_metadata: Optional[str] = None,
+    *,
+    sample_unit: str = "mV",
+    time_unit: str = "s",
 ) -> WaveformData:
     """
     Parse binary-encoded MQTT payload.
@@ -391,13 +413,14 @@ def _parse_binary_payload(
 
         # Create and return WaveformData
         return WaveformData(
-            t0=t0,
-            dt=dt,
+            t0=t0 * _TIME_UNIT_SECONDS[time_unit],
+            dt=dt * _TIME_UNIT_SECONDS[time_unit],
             channels=channels,
             timestamp=timestamp,
             trapping_parameters=trapping_parameters,
             selected_excitation_step=selected_excitation_step,
             collector_metadata=collector_metadata,
+            sample_unit=sample_unit,
         )
 
     except struct.error as e:

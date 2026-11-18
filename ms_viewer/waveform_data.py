@@ -35,6 +35,8 @@ class WaveformData:
         trapping_parameters: TrapControls,
         selected_excitation_step: int,
         collector_metadata: str | None = None,
+        *,
+        sample_unit: str = "mV",
     ):
         """
         Initialize WaveformData.
@@ -66,6 +68,7 @@ class WaveformData:
         self.t0 = t0
         self.dt = dt
         self.channels = channels
+        self.sample_unit = sample_unit
         self.timestamp = timestamp
         self.trapping_parameters = trapping_parameters
         self.selected_excitation_step = selected_excitation_step
@@ -226,6 +229,7 @@ class WaveformData:
         instance.t0 = source.t0
         instance.dt = source.dt
         instance.channels = channels
+        instance.sample_unit = source.sample_unit
         instance.timestamp = timestamp if timestamp is not None else source.timestamp
         instance.trapping_parameters = source.trapping_parameters
         instance.selected_excitation_step = source.selected_excitation_step

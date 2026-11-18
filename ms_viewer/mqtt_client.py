@@ -9,6 +9,8 @@ import logging
 from typing import Optional
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .data_model import PayloadParseError, parse_payload, parse_trapping_parameters
@@ -43,6 +45,7 @@ class MqttClient(QObject):
     """
 
     # Qt signals
+    waveform_for_forwarding = pyqtSignal(bytes, object)
     raw_waveform_received = pyqtSignal(bytes)  # Original PicoScope MQTT payload
     waveform_received = pyqtSignal(object)  # WaveformData
     trapping_parameters_received = pyqtSignal(object)  # TrapControls
@@ -139,7 +142,7 @@ class MqttClient(QObject):
 
         try:
             # Create new client
-            self._client = mqtt.Client(client_id=self.client_id)
+            self._client = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv5)
 
             # Set callbacks
             self._client.on_connect = self._on_connect
@@ -237,7 +240,7 @@ class MqttClient(QObject):
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
 
-    def publish(self, topic: str, payload_bytes: bytes):
+    def publish(self, topic: str, payload_bytes: bytes, *, units=None):
         """
         Publish a message to the specified topic.
 
@@ -252,7 +255,11 @@ class MqttClient(QObject):
             return
 
         try:
-            result = self._client.publish(topic, payload_bytes, qos=1)
+            properties = None
+            if units:
+                properties = Properties(PacketTypes.PUBLISH)
+                properties.UserProperty = list(units.items())
+            result = self._client.publish(topic, payload_bytes, qos=1, properties=properties)
 
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 error_msg = (
@@ -279,7 +286,7 @@ class MqttClient(QObject):
 
     # MQTT callbacks
 
-    def _on_connect(self, client, userdata, flags, rc):
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
         """
         Callback when connection to broker is established.
         """
@@ -293,12 +300,12 @@ class MqttClient(QObject):
             self.subscribe()
         else:
             self._connected = False
-            error_msg = f"Connection failed with code {rc}: {mqtt.connack_string(rc)}"
+            error_msg = f"Connection failed with code {rc}"
             logger.error(error_msg)
             self.connection_state_changed.emit(False, error_msg)
             self.error_occurred.emit(error_msg)
 
-    def _on_disconnect(self, client, userdata, rc):
+    def _on_disconnect(self, client, userdata, rc, properties=None):
         """
         Callback when disconnected from broker.
         """
@@ -313,7 +320,7 @@ class MqttClient(QObject):
             logger.warning(error_msg)
             self.connection_state_changed.emit(False, error_msg)
 
-    def _on_subscribe(self, client, userdata, mid, granted_qos):
+    def _on_subscribe(self, client, userdata, mid, granted_qos, properties=None):
         """
         Callback when subscription is confirmed.
         """
@@ -331,7 +338,15 @@ class MqttClient(QObject):
             # Forwarding must not depend on local trapping parameters or the
             # selected GUI step. Consumers can parse the original payload with
             # their own, synchronized experiment parameters.
-            self.raw_waveform_received.emit(bytes(message.payload))
+            properties = getattr(message, "properties", None)
+            units = {
+                name: value
+                for name, value in getattr(properties, "UserProperty", ())
+                if name in ("sample_unit", "time_unit")
+            }
+            payload = bytes(message.payload)
+            self.raw_waveform_received.emit(payload)
+            self.waveform_for_forwarding.emit(payload, units)
             try:
                 trapping_parameters = self.trapping_parameters
                 if trapping_parameters is None:
@@ -352,6 +367,8 @@ class MqttClient(QObject):
                     trapping_parameters,
                     selected_excitation_step=step_index,
                     collector_metadata=self.collector_metadata,
+                    sample_unit=units.get("sample_unit", "mV"),
+                    time_unit=units.get("time_unit", "s"),
                 )
 
                 # Emit signal with parsed waveform
